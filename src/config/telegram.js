@@ -67,6 +67,8 @@ export const keyboards = {
         [{ text: '✏️ Edit Profile', callback_data: 'edit_profile' }],
         [{ text: '📸 Add Photos', callback_data: 'add_photos' }],
         [{ text: '✅ Verify Profile', callback_data: 'verify_profile' }],
+        [{ text: '💕 Who Likes Me', callback_data: 'who_likes_me' }],
+        [{ text: '🗑️ Delete Account', callback_data: 'delete_account' }],
         [{ text: '🔙 Back', callback_data: 'main_menu' }]
       ]
     }
@@ -76,9 +78,9 @@ export const keyboards = {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: '❌ Pass', callback_data: 'pass' },
-          { text: '💕 Like', callback_data: 'like' },
-          { text: '⭐ Super Like', callback_data: 'super_like' }
+          { text: '❌ Pass', callback_data: 'swipe_pass' },
+          { text: '💕 Like', callback_data: 'swipe_like' },
+          { text: '⭐ Super Like', callback_data: 'swipe_super_like' }
         ],
         [{ text: '🔙 Back to Menu', callback_data: 'main_menu' }]
       ]

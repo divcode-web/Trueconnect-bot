@@ -182,4 +182,40 @@ export class UserService {
       return false;
     }
   }
+
+  static async deleteUserAccount(telegramId) {
+    try {
+      // This will cascade delete all related data due to foreign key constraints
+      const { error } = await supabaseAdmin
+        .from('users')
+        .delete()
+        .eq('telegram_id', telegramId);
+
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Error deleting user account:', error);
+      return false;
+    }
+  }
+
+  static async updateUserField(telegramId, field, value) {
+    try {
+      const updates = {};
+      updates[field] = value;
+      updates.updated_at = new Date().toISOString();
+
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .update(updates)
+        .eq('telegram_id', telegramId)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating user field:', error);
+      throw error;
+    }
+  }
 }

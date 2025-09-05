@@ -133,7 +133,11 @@ export class RegistrationHandler {
       });
       
       await UserService.updateRegistrationStep(user.telegram_id, 'bio');
-      await bot.sendMessage(msg.chat.id, this.registrationSteps.bio);
+      await bot.sendMessage(msg.chat.id, this.registrationSteps.bio, {
+        reply_markup: {
+          remove_keyboard: true
+        }
+      });
     } else {
       await bot.sendMessage(msg.chat.id, 
         'Please share your location using the button below:',

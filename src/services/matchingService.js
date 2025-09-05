@@ -237,4 +237,24 @@ export class MatchingService {
     };
     return levels[education] || 0;
   }
+
+  static async getUserLikes(userId) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_swipes')
+        .select(`
+          *,
+          swiper:users!user_swipes_swiper_id_fkey(*)
+        `)
+        .eq('swiped_id', userId)
+        .in('action', ['like', 'super_like'])
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data?.map(swipe => swipe.swiper) || [];
+    } catch (error) {
+      console.error('Error fetching user likes:', error);
+      return [];
+    }
+  }
 }

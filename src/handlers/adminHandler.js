@@ -40,6 +40,9 @@ export class AdminHandler {
       case '/suspend':
         await this.handleSuspendCommand(msg);
         break;
+      case '/test_user':
+        await this.handleTestUserMode(msg);
+        break;
       default:
         await bot.sendMessage(msg.chat.id, 'Unknown admin command.');
     }
@@ -62,6 +65,10 @@ export class AdminHandler {
           [
             { text: '💎 Subscriptions', callback_data: 'admin_subscriptions' },
             { text: '📈 Analytics', callback_data: 'admin_analytics' }
+          ],
+          [
+            { text: '👤 Test User Mode', callback_data: 'admin_test_user' },
+            { text: '💳 Payment Management', callback_data: 'admin_payments' }
           ],
           [{ text: '🔙 Close', callback_data: 'admin_close' }]
         ]
@@ -438,6 +445,64 @@ export class AdminHandler {
     } catch (error) {
       console.error('Error suspending user:', error);
       await bot.sendMessage(msg.chat.id, 'Error suspending user.');
+    }
+  }
+
+  static async handleTestUserMode(msg) {
+    const chatId = msg.chat.id;
+    const adminId = msg.from.id;
+
+    await bot.sendMessage(chatId, 
+      '👤 Test User Mode\n\n' +
+      'As an admin, you can now use the bot as a regular user for testing purposes.\n\n' +
+      'Use the main menu below:',
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '👤 My Profile', callback_data: 'profile' }],
+            [{ text: '💕 Browse Matches', callback_data: 'browse' }],
+            [{ text: '💬 My Matches', callback_data: 'matches' }],
+            [{ text: '💎 Premium', callback_data: 'premium' }],
+            [{ text: '🔧 Back to Admin', callback_data: 'admin_menu' }]
+          ]
+        }
+      }
+    );
+  }
+
+  static async showSubscriptionManagement(chatId) {
+    try {
+      const { data: subscriptions, error } = await supabaseAdmin
+        .from('subscriptions')
+        .select(`
+          *,
+          user:users(first_name, username, telegram_id)
+        `)
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(10);
+      if (error) throw error;
+
+      let subsText = `💎 Active Subscriptions (${subscriptions?.length || 0})\n\n`;
+      
+      subscriptions?.forEach((sub, index) => {
+        subsText += `${index + 1}. ${sub.user.first_name} (@${sub.user.username || 'N/A'})\n`;
+        subsText += `   Plan: ${sub.plan_type.toUpperCase()}\n`;
+        subsText += `   Expires: ${new Date(sub.expires_at).toLocaleDateString()}\n`;
+        subsText += `   Amount: $${sub.amount_paid}\n\n`;
+      });
+
+      await bot.sendMessage(chatId, subsText, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔄 Refresh', callback_data: 'admin_subscriptions' }],
+            [{ text: '🔙 Back', callback_data: 'admin_menu' }]
+          ]
+        }
+      });
+    } catch (error) {
+      console.error('Error showing subscription management:', error);
+      await bot.sendMessage(chatId, 'Error loading subscriptions.');
     }
   }
 }

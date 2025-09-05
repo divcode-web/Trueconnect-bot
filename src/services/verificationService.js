@@ -21,8 +21,7 @@ export class VerificationService {
       console.error('Error starting face verification:', error);
       throw error;
     }
-  }
-
+    }
   static async submitVerificationPhoto(userId, photoData) {
     try {
       // Process and optimize the image
@@ -237,5 +236,41 @@ export class VerificationService {
 
   static toRadians(degrees) {
     return degrees * (Math.PI / 180);
+  }
+
+  static async submitVerificationVideo(userId, videoData) {
+    try {
+      // Process and upload the video
+      const fileName = `verification_video_${userId}_${Date.now()}.mp4`;
+      
+      // Download video from Telegram
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${videoData.file_path}`;
+      
+      // Upload to Supabase Storage
+      const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+        .from('verification-videos')
+        .upload(fileName, videoData.file_id, {
+          contentType: 'video/mp4'
+        });
+      if (uploadError) throw uploadError;
+
+      // Update verification record
+      const { data, error } = await supabaseAdmin
+        .from('verifications')
+        .upsert({
+          user_id: userId,
+          verification_type: 'face',
+          status: 'submitted',
+          photo_url: uploadData.path, // Using photo_url field for video path
+          submitted_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error submitting verification video:', error);
+      throw error;
+    }
   }
 }

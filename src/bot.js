@@ -161,12 +161,47 @@ bot.on('message', async (msg) => {
       return;
     }
 
+    // Handle account deletion confirmation
+    if (text === 'DELETE MY ACCOUNT') {
+      const success = await UserService.deleteUserAccount(userId);
+      if (success) {
+        await bot.sendMessage(chatId, 
+          '✅ Account Deleted\n\n' +
+          'Your account has been permanently deleted. All your data has been removed.\n\n' +
+          'Thank you for using our service. You can create a new account anytime with /start'
+        );
+      } else {
+        await bot.sendMessage(chatId, 
+          '❌ Error deleting account. Please contact support.'
+        );
+      }
+      return;
+    }
+
+    // Handle profile editing text inputs
+    if (currentUser?.editing_field) {
+      await handleProfileEdit(msg, currentUser);
+      return;
+    }
+
     // Handle photo uploads
     if (msg.photo) {
       if (currentUser?.registration_step === 'photos') {
         await RegistrationHandler.handlePhotos(msg, currentUser);
+      } else if (currentUser?.uploading_photos) {
+        await handlePhotoUpload(msg, currentUser);
       } else {
         await bot.sendMessage(chatId, 'Photo received! Use /profile to manage your photos.');
+      }
+      return;
+    }
+
+    // Handle video uploads for verification
+    if (msg.video) {
+      if (currentUser?.uploading_verification) {
+        await handleVerificationVideo(msg, currentUser);
+      } else {
+        await bot.sendMessage(chatId, 'Video received! Use /verify to start verification process.');
       }
       return;
     }
@@ -243,6 +278,16 @@ bot.on('callback_query', async (query) => {
       if (await AdminHandler.isAdmin(userId)) {
         await handleAdminCallback(chatId, userId, data);
       }
+    } else if (data.startsWith('edit_')) {
+      const field = data.split('_')[1];
+      await handleStartFieldEdit(chatId, userId, field);
+    } else if (data === 'upload_verification') {
+      await handleUploadVerification(chatId, userId);
+    } else if (data.startsWith('confirm_stars_')) {
+      const parts = data.split('_');
+      const plan = parts[2];
+      const amount = parts[3];
+      await processStarPayment(chatId, userId, plan, amount);
     }
 
   } catch (error) {
@@ -510,6 +555,125 @@ async function handlePurchasePlan(chatId, userId, plan) {
   );
 }
 
+// New handler functions for profile editing
+async function handleStartFieldEdit(chatId, userId, field) {
+  const fieldNames = {
+    bio: 'Bio',
+    interests: 'Interests',
+    profession: 'Profession',
+    height: 'Height',
+    education: 'Education'
+  };
+
+  await UserService.updateUser(userId, { editing_field: field });
+  
+  await bot.sendMessage(chatId, 
+    `✏️ Edit ${fieldNames[field]}\n\n` +
+    `Please enter your new ${fieldNames[field].toLowerCase()}:`
+  );
+}
+
+async function handleProfileEdit(msg, user) {
+  const field = user.editing_field;
+  const value = msg.text?.trim();
+
+  if (!value) {
+    await bot.sendMessage(msg.chat.id, 'Please enter a valid value.');
+    return;
+  }
+
+  try {
+    await UserService.updateUserField(user.telegram_id, field, value);
+    await UserService.updateUser(user.telegram_id, { editing_field: null });
+    
+    await bot.sendMessage(msg.chat.id, 
+      `✅ ${field.charAt(0).toUpperCase() + field.slice(1)} updated successfully!`,
+      keyboards.profileActions
+    );
+  } catch (error) {
+    console.error('Error updating profile field:', error);
+    await bot.sendMessage(msg.chat.id, 'Error updating profile. Please try again.');
+  }
+}
+
+async function handlePhotoUpload(msg, user) {
+  const photos = await UserService.getUserPhotos(user.telegram_id);
+  if (photos.length >= 6) {
+    await bot.sendMessage(msg.chat.id, 
+      'You can upload maximum 6 photos.',
+      keyboards.profileActions
+    );
+    return;
+  }
+
+  const photo = msg.photo[msg.photo.length - 1];
+  await UserService.addUserPhoto(user.telegram_id, {
+    file_id: photo.file_id,
+    url: `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${photo.file_path}`,
+    is_primary: photos.length === 0,
+    order_index: photos.length
+  });
+
+  await bot.sendMessage(msg.chat.id, 
+    `📸 Photo ${photos.length + 1} uploaded successfully!`,
+    keyboards.profileActions
+  );
+}
+
+async function handleUploadVerification(chatId, userId) {
+  await UserService.updateUser(userId, { uploading_verification: true });
+  
+  await bot.sendMessage(chatId, 
+    '📹 Upload Verification Video\n\n' +
+    'Please upload your verification video now. Make sure it follows the guidelines:\n\n' +
+    '• 5-10 seconds long\n' +
+    '• Clear face visibility\n' +
+    '• Say your name and "verifying my profile"\n' +
+    '• Good lighting\n\n' +
+    'Send the video now:'
+  );
+}
+
+async function handleVerificationVideo(msg, user) {
+  try {
+    await VerificationService.submitVerificationVideo(user.telegram_id, msg.video);
+    await UserService.updateUser(user.telegram_id, { uploading_verification: false });
+    
+    await bot.sendMessage(msg.chat.id, 
+      '✅ Verification Video Submitted!\n\n' +
+      'Your verification video has been submitted for review. ' +
+      'Our team will review it within 24 hours and notify you of the result.',
+      keyboards.profileActions
+    );
+  } catch (error) {
+    console.error('Error submitting verification video:', error);
+    await bot.sendMessage(msg.chat.id, 
+      '❌ Error uploading verification video. Please try again.'
+    );
+  }
+}
+
+async function processStarPayment(chatId, userId, plan, amount) {
+  try {
+    // Create Telegram Stars invoice
+    const invoice = {
+      title: `Premium ${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan`,
+      description: `Upgrade to ${plan} plan with premium features`,
+      payload: `premium_${plan}_${userId}`,
+      provider_token: '', // Empty for Telegram Stars
+      currency: 'XTR', // Telegram Stars currency
+      prices: [{ label: 'Premium Plan', amount: parseInt(amount) }]
+    };
+
+    await bot.sendInvoice(chatId, invoice.title, invoice.description, 
+      invoice.payload, invoice.provider_token, invoice.currency, invoice.prices);
+      
+  } catch (error) {
+    console.error('Error processing star payment:', error);
+    await bot.sendMessage(chatId, 'Error processing payment. Please try again.');
+  }
+}
+
 async function handleAdminCallback(chatId, userId, data) {
   const action = data.split('_')[1];
   
@@ -522,6 +686,14 @@ async function handleAdminCallback(chatId, userId, data) {
       break;
     case 'verifications':
       await AdminHandler.showPendingVerifications(chatId);
+      break;
+    case 'subscriptions':
+      await AdminHandler.showSubscriptionManagement(chatId);
+      break;
+    case 'test':
+      if (data === 'admin_test_user') {
+        await AdminHandler.handleTestUserMode({ chat: { id: chatId }, from: { id: userId } });
+      }
       break;
     case 'menu':
       await AdminHandler.showAdminMenu(chatId);

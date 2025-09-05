@@ -125,26 +125,32 @@ The synchronization works because:
 ### Prerequisites
 - Node.js 18+ 
 - Supabase account
-- PayStack account (for payments)
+- Payment provider accounts:
+  - Telegram Bot with Stars enabled
+  - SmartGlocal merchant account
 - Telegram Bot Token (for Telegram integration)
 
 ### Environment Variables
 ```env
 # Supabase Configuration
-VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
 # Payment Integration
-PAYSTACK_SECRET_KEY=your_paystack_secret
-NOWPAYMENTS_API_KEY=your_nowpayments_key
+SMARTGLOCAL_API_KEY=your_smartglocal_key
+SMARTGLOCAL_MERCHANT_ID=your_merchant_id
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 
 # App Configuration
 NODE_ENV=production
 PORT=3000
-JWT_SECRET=your_jwt_secret
 ADMIN_EMAIL=admin@yourdomain.com
+ADMIN_USER_ID=your_telegram_admin_id
+
+# Channel Configuration
+CHANNEL_USERNAME=@YourChannel
+CHANNEL_PROMOTION_FREQUENCY=10
 ```
 
 ### Quick Start
@@ -171,6 +177,57 @@ npm run build
 npm start
 ```
 
+## 💳 Payment Integration Setup
+
+### Telegram Stars Setup
+1. **Enable Stars in BotFather**:
+   - Contact @BotFather
+   - Use `/mybots` → Select your bot → Bot Settings → Payments
+   - Enable Telegram Stars payments
+
+2. **Configure Star Prices**:
+   - 1 USD ≈ 50 Telegram Stars
+   - Silver Plan: 1000 Stars
+   - Gold Plan: 3000 Stars
+   - Platinum Plan: 10000 Stars
+
+### SmartGlocal Integration
+1. **Create Merchant Account**:
+   - Register at SmartGlocal
+   - Complete KYC verification
+   - Get API credentials
+
+2. **Configure Webhook**:
+   - Set webhook URL: `https://yourdomain.com/webhook/smartglocal`
+   - Configure payment notifications
+   - Test payment flow
+
+## 🆕 New Features Added
+
+### ✅ Profile Verification System
+- **Video Verification**: Users upload verification videos
+- **Step-by-step Instructions**: Clear guidance for verification process
+- **Sample Video**: Reference video showing proper verification
+- **Admin Review**: Manual verification review by administrators
+
+### 👤 Enhanced Profile Management
+- **Edit Profile Fields**: Users can edit bio, interests, profession, etc.
+- **Photo Management**: Upload, delete, and reorder profile photos
+- **Account Deletion**: Complete account removal with data cleanup
+- **Who Likes Me**: Premium feature showing users who liked your profile
+
+### 🔧 Admin Enhancements
+- **Test User Mode**: Admin can test app as regular user
+- **Subscription Management**: View and manage all subscriptions
+- **Payment Monitoring**: Track all payment transactions
+- **Enhanced Analytics**: Detailed user and revenue analytics
+
+### 💳 Payment System Upgrades
+- **Telegram Stars**: Native Telegram payment integration
+- **SmartGlocal Gateway**: International payment processing
+- **Multiple Payment Options**: Various payment methods for global users
+- **Automated Billing**: Subscription management and renewals
+
 ## 🔧 Admin Features
 
 ### 👨‍💼 Admin Dashboard (Restricted Access)
@@ -193,6 +250,17 @@ npm start
   - Manage profile photos and descriptions
   - Monitor chat messages for policy violations
   - Automated content filtering
+
+- **Subscription Management**:
+  - View all active subscriptions
+  - Monitor payment transactions
+  - Handle subscription issues
+  - Generate revenue reports
+
+- **Test User Mode**:
+  - Admin can switch to regular user mode for testing
+  - Test all features from user perspective
+  - Debug issues in real-time
 
 - **Analytics Dashboard**:
   - User engagement metrics
@@ -236,12 +304,20 @@ npm start
    - Silver: $29/quarter - Enhanced experience  
    - Bronze: $12/month - Basic premium features
 
-2. **Micro-Transactions** via Telegram Stars
+2. **Telegram Stars Integration**
    - Profile boosts: ⭐50 stars
    - Super likes: ⭐20 stars
    - Message highlights: ⭐10 stars
+   - Premium subscriptions: ⭐1000-5000 stars
+   - Seamless in-app payments
 
-3. **Channel Promotion** 
+3. **SmartGlocal Payment Gateway**
+   - Credit/Debit card payments
+   - International payment support
+   - Secure payment processing
+   - Multiple currency support
+
+4. **Channel Promotion** 
    - Strategic "Subscribe to my channel" prompts
    - Affiliate marketing integration
 
