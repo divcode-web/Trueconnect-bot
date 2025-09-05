@@ -9,6 +9,8 @@ import { VerificationService } from './services/verificationService.js';
 import { ReportService } from './services/reportService.js';
 import { RegistrationHandler } from './handlers/registrationHandler.js';
 import { BrowsingHandler } from './handlers/browsingHandler.js';
+import { ProfileHandler } from './handlers/profileHandler.js';
+import { VerificationHandler } from './handlers/verificationHandler.js';
 import { AdminHandler } from './handlers/adminHandler.js';
 import cron from 'node-cron';
 import dotenv from 'dotenv';
@@ -113,7 +115,14 @@ bot.on('message', async (msg) => {
 
     // Handle location updates
     if (msg.location) {
-      await BrowsingHandler.handleLocationUpdate(msg);
+      // Route based on user state
+      if (user && user.registration_step && user.registration_step !== 'done') {
+        await RegistrationHandler.handleLocation(msg, user);
+      } else if (user && user.is_active) {
+        await BrowsingHandler.handleLocationUpdate(msg);
+      } else {
+        await bot.sendMessage(chatId, 'Location received, but you are not in a valid state.');
+      }
       return;
     }
 

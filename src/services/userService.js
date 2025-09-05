@@ -1,5 +1,4 @@
 import { supabaseAdmin } from '../config/database.js';
-import bcrypt from 'bcryptjs';
 
 export class UserService {
   static async createUser(telegramData) {
@@ -60,21 +59,11 @@ export class UserService {
     }
   }
 
-  static async updateUser(telegramId, updates) {
-    try {
-      const { data, error } = await supabaseAdmin
-        .from('users')
-        .update(updates)
-        .eq('telegram_id', telegramId)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error updating user:', error);
-      throw error;
-    }
+  static async updateUser(telegram_id, fields) {
+    return await supabaseAdmin
+      .from('users')
+      .update(fields)
+      .eq('telegram_id', telegram_id);
   }
 
   static async updateRegistrationStep(telegramId, step) {
@@ -109,6 +98,63 @@ export class UserService {
       console.error('Error adding user photo:', error);
       throw error;
     }
+  }
+
+  static async addPhoto(telegram_id, photoUrl) {
+    return await supabaseAdmin
+      .from('user_photos')
+      .insert({ user_id: telegram_id, photo_url: photoUrl });
+  }
+
+  static async savePhotoToStorage(telegram_id, fileId) {
+    // Download photo from Telegram and upload to Supabase Storage
+    // Return public URL
+    // Implement this as needed
+    return `https://your-supabase-url/storage/v1/object/public/profile-photos/${telegram_id}_${fileId}.jpg`;
+  }
+
+  static async getLikesForUser(telegram_id) {
+    const { data } = await supabaseAdmin
+      .from('likes')
+      .select('*')
+      .eq('user_id', telegram_id);
+    return data;
+  }
+
+  static async deleteUser(telegram_id) {
+    return await supabaseAdmin
+      .from('users')
+      .delete()
+      .eq('telegram_id', telegram_id);
+  }
+
+  static async getMatchesForUser(telegram_id) {
+    const { data } = await supabaseAdmin
+      .from('matches')
+      .select('*')
+      .or(`user1_id.eq.${telegram_id},user2_id.eq.${telegram_id}`);
+    return data;
+  }
+
+  static async updatePreferences(telegram_id, prefs) {
+    return await supabaseAdmin
+      .from('users')
+      .update({ matching_preferences: prefs })
+      .eq('telegram_id', telegram_id);
+  }
+
+  static async updateNotifications(telegram_id, notif) {
+    return await supabaseAdmin
+      .from('users')
+      .update({ notification_settings: notif })
+      .eq('telegram_id', telegram_id);
+  }
+
+  static async updatePrivacy(telegram_id, privacy) {
+    return await supabaseAdmin
+      .from('users')
+      .update({ privacy_settings: privacy })
+      .eq('telegram_id', telegram_id);
   }
 
   static async getUserPhotos(telegramId) {

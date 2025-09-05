@@ -237,8 +237,7 @@ export class VerificationService {
   static toRadians(degrees) {
     return degrees * (Math.PI / 180);
   }
-
-  static async submitVerificationVideo(userId, videoData) {
+   /*  static async submitVerificationVideo(userId, videoData) {
     try {
       // Process and upload the video
       const fileName = `verification_video_${userId}_${Date.now()}.mp4`;
@@ -272,5 +271,26 @@ export class VerificationService {
       console.error('Error submitting verification video:', error);
       throw error;
     }
+  }
+} */
+
+  static async saveVideoToStorage(telegram_id, fileId) {
+    // Download video from Telegram and upload to Supabase Storage
+    // Return public URL
+    // Implement this as needed
+    return `https://your-supabase-url/storage/v1/object/public/verification-videos/${telegram_id}_${fileId}.mp4`;
+  }
+
+  static async submitVerificationVideo(telegram_id, videoData) {
+    // Save verification record in DB
+    return await supabaseAdmin
+      .from('verifications')
+      .insert({
+        user_id: telegram_id,
+        verification_type: 'video',
+        status: 'pending',
+        photo_url: videoData.file_path,
+        submitted_at: new Date().toISOString()
+      });
   }
 }

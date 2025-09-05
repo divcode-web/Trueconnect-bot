@@ -1,6 +1,7 @@
 import { MatchingService } from '../services/matchingService.js';
 import { UserService } from '../services/userService.js';
 import { SubscriptionService } from '../services/subscriptionService.js';
+import { BrowsingService } from '../services/browsingService.js';
 import { bot, keyboards, botConfig } from '../config/telegram.js';
 
 export class BrowsingHandler {
@@ -303,18 +304,22 @@ export class BrowsingHandler {
     );
   }
 
-  static async handleLocationUpdate(msg) {
-    if (msg.location) {
-      await UserService.updateUser(msg.from.id, {
-        latitude: msg.location.latitude,
-        longitude: msg.location.longitude,
-        location_updated_at: new Date().toISOString()
-      });
-
-      await bot.sendMessage(msg.chat.id, 
-        '📍 Location updated! You can now browse matches.',
-        keyboards.mainMenu
-      );
+  // Browse matches
+  static async handleBrowseMatches(msg, user) {
+    const matches = await BrowsingService.browseMatches(user.telegram_id);
+    if (!matches || matches.length === 0) {
+      await bot.sendMessage(msg.chat.id, 'No matches found. Try updating your preferences!');
+    } else {
+      const matchList = matches.map(m => `• ${m.first_name} (@${m.username})`).join('\n');
+      await bot.sendMessage(msg.chat.id, `Browse matches:\n${matchList}`);
     }
+  }
+
+  static async handleLocationUpdate(msg) {
+    const userId = msg.from.id;
+    const lat = msg.location.latitude;
+    const lon = msg.location.longitude;
+    await BrowsingService.updateLocation(userId, lat, lon);
+    await bot.sendMessage(msg.chat.id, '✅ Location updated!');
   }
 }
