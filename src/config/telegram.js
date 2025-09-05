@@ -32,7 +32,7 @@ export async function setupWebhook() {
 // Bot configuration
 export const botConfig = {
   adminUserId: parseInt(process.env.ADMIN_USER_ID),
-  channelUsername: process.env.CHANNEL_USERNAME || '@YourChannel',
+  channelUsername: process.env.CHANNEL_USERNAME || '@YourChannel', 
   channelPromotionFrequency: parseInt(process.env.CHANNEL_PROMOTION_FREQUENCY) || 10
 };
 
