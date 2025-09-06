@@ -60,10 +60,20 @@ export class UserService {
   }
 
   static async updateUser(telegram_id, fields) {
-    return await supabaseAdmin
-      .from('users')
-      .update(fields)
-      .eq('telegram_id', telegram_id);
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .update(fields)
+        .eq('telegram_id', telegram_id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating user:', error);
+      throw error;
+    }
   }
 
   static async updateRegistrationStep(telegramId, step) {
@@ -101,60 +111,134 @@ export class UserService {
   }
 
   static async addPhoto(telegram_id, photoUrl) {
-    return await supabaseAdmin
-      .from('user_photos')
-      .insert({ user_id: telegram_id, photo_url: photoUrl });
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_photos')
+        .insert({ 
+          user_id: telegram_id, 
+          photo_url: photoUrl,
+          file_id: null,
+          is_primary: false,
+          order_index: 0
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error adding photo:', error);
+      throw error;
+    }
   }
 
   static async savePhotoToStorage(telegram_id, fileId) {
     // Download photo from Telegram and upload to Supabase Storage
     // Return public URL
-    // Implement this as needed
+    // This is a placeholder - implement actual photo storage logic
     return `https://your-supabase-url/storage/v1/object/public/profile-photos/${telegram_id}_${fileId}.jpg`;
   }
 
-  static async getLikesForUser(telegram_id) {
-    const { data } = await supabaseAdmin
-      .from('likes')
-      .select('*')
-      .eq('user_id', telegram_id);
-    return data;
+  static async getUserLikes(telegram_id) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_swipes')
+        .select(`
+          *,
+          swiper:users!user_swipes_swiper_id_fkey(*)
+        `)
+        .eq('swiped_id', telegram_id)
+        .in('action', ['like', 'super_like'])
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data?.map(swipe => swipe.swiper) || [];
+    } catch (error) {
+      console.error('Error fetching user likes:', error);
+      return [];
+    }
   }
 
   static async deleteUser(telegram_id) {
-    return await supabaseAdmin
-      .from('users')
-      .delete()
-      .eq('telegram_id', telegram_id);
+    try {
+      const { error } = await supabaseAdmin
+        .from('users')
+        .delete()
+        .eq('telegram_id', telegram_id);
+
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      return false;
+    }
   }
 
   static async getMatchesForUser(telegram_id) {
-    const { data } = await supabaseAdmin
-      .from('matches')
-      .select('*')
-      .or(`user1_id.eq.${telegram_id},user2_id.eq.${telegram_id}`);
-    return data;
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('matches')
+        .select('*')
+        .or(`user1_id.eq.${telegram_id},user2_id.eq.${telegram_id}`)
+        .eq('is_active', true);
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error fetching matches:', error);
+      return [];
+    }
   }
 
   static async updatePreferences(telegram_id, prefs) {
-    return await supabaseAdmin
-      .from('users')
-      .update({ matching_preferences: prefs })
-      .eq('telegram_id', telegram_id);
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .update({ matching_preferences: prefs })
+        .eq('telegram_id', telegram_id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating preferences:', error);
+      throw error;
+    }
   }
 
   static async updateNotifications(telegram_id, notif) {
-    return await supabaseAdmin
-      .from('users')
-      .update({ notification_settings: notif })
-      .eq('telegram_id', telegram_id);
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .update({ notification_settings: notif })
+        .eq('telegram_id', telegram_id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating notifications:', error);
+      throw error;
+    }
   }
 
   static async updatePrivacy(telegram_id, privacy) {
-    return await supabaseAdmin
-      .from('users')
-      .update({ privacy_settings: privacy })
-      .eq('telegram_id', telegram_id);
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .update({ privacy_settings: privacy })
+        .eq('telegram_id', telegram_id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating privacy:', error);
+      throw error;
+    }
   }
 
   static async getUserPhotos(telegramId) {
@@ -263,17 +347,6 @@ export class UserService {
     } catch (error) {
       console.error('Error updating user field:', error);
       throw error;
-    }
-  }
-
-  static async getUserLikes(telegramId) {
-    try {
-      const { data, error } = await supabaseAdmin
-      if (error) throw error;
-      return data?.map(swipe => swipe.swiper) || [];
-    } catch (error) {
-      console.error('Error fetching user likes:', error);
-      return [];
     }
   }
 
@@ -395,6 +468,7 @@ export class UserService {
         .from('user_photos')
         .update({ is_primary: false })
         .eq('user_id', telegramId);
+      
       // Then set the selected photo as primary
       const { error } = await supabaseAdmin
         .from('user_photos')

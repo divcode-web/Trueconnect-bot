@@ -1,17 +1,5 @@
-import TelegramBot from 'node-telegram-bot-api';
-import dotenv from 'dotenv';
+// keyboards.js - Telegram keyboard configurations
 
-dotenv.config();
-
-// Initialize bot
-const token = process.env.BOT_TOKEN;
-if (!token) {
-  throw new Error('BOT_TOKEN environment variable is required');
-}
-
-export const bot = new TelegramBot(token, { polling: false });
-
-// Keyboards configuration
 export const keyboards = {
   mainMenu: {
     reply_markup: {
@@ -116,39 +104,10 @@ export const keyboards = {
 // Bot configuration
 export const botConfig = {
   channelUsername: process.env.CHANNEL_USERNAME || null,
-  channelPromotionFrequency: parseInt(process.env.CHANNEL_PROMOTION_FREQUENCY) || 5,
+  channelPromotionFrequency: 5, // Show promotion every 5 profiles
   adminUserId: parseInt(process.env.ADMIN_USER_ID) || null,
   supportUsername: process.env.SUPPORT_USERNAME || null,
   maxPhotosPerUser: 6,
   maxDailyLikesForFree: 20,
-  verificationRequired: process.env.VERIFICATION_REQUIRED === 'true' || false,
-  webhookUrl: process.env.WEBHOOK_URL || null
+  verificationRequired: false
 };
-
-// Setup webhook
-export async function setupWebhook() {
-  try {
-    if (process.env.NODE_ENV === 'production' && botConfig.webhookUrl) {
-      await bot.setWebHook(`${botConfig.webhookUrl}/webhook`);
-      console.log('✅ Webhook set up successfully');
-    } else {
-      // Development mode - use polling
-      await bot.deleteWebHook();
-      console.log('✅ Webhook disabled for development mode');
-    }
-  } catch (error) {
-    console.error('❌ Error setting up webhook:', error);
-    throw error;
-  }
-}
-
-// Error handler
-bot.on('polling_error', (error) => {
-  console.error('Polling error:', error);
-});
-
-bot.on('webhook_error', (error) => {
-  console.error('Webhook error:', error);
-});
-
-export default bot;

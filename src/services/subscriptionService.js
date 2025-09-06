@@ -6,7 +6,6 @@ export class SubscriptionService {
       name: 'Silver',
       price: 19.99,
       duration: 90, // 3 months in days
-      currency: 'USD',
       features: [
         'Unlimited likes per day',
         'See who liked you',
@@ -19,11 +18,10 @@ export class SubscriptionService {
       name: 'Gold',
       price: 59.99,
       duration: 365, // 1 year in days
-      currency: 'USD',
       features: [
         'All Silver features',
         'Unlimited super likes',
-        'Priority in matching algorithm',
+        'Priority in matching',
         'Extended location radius (200km)',
         'Advanced filters',
         'Rewind last swipe',
@@ -33,115 +31,118 @@ export class SubscriptionService {
     platinum: {
       name: 'Platinum',
       price: 199.99,
-      duration: 36500, // Lifetime (100 years)
-      currency: 'USD',
+      duration: null, // Lifetime
       features: [
         'All Gold features',
-        'Top picks daily suggestions',
+        'Top picks daily',
         'Message before matching',
         'Unlimited location radius',
-        'Premium badge on profile',
-        'Priority customer support',
+        'Premium badge',
+        'Priority support',
         'Unlimited boosts'
       ]
     }
   };
 
-  static async createSubscription(userId, planType, paymentMethod, transactionId) {
+  static async isUserPremium(telegramId) {
     try {
-      const plan = this.subscriptionPlans[planType];
-      if (!plan) throw new Error('Invalid subscription plan');
-
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + plan.duration);
-
-      const { data, error } = await supabaseAdmin
+      const { data: subscription, error } = await supabaseAdmin
         .from('subscriptions')
-        .insert({
-          user_id: userId,
-          plan_type: planType,
-          status: 'active',
-          started_at: new Date().toISOString(),
-          expires_at: expiresAt.toISOString(),
-          payment_method: paymentMethod,
-          transaction_id: transactionId,
-          amount_paid: plan.price,
-          currency: plan.currency
-        })
-        .select()
+        .select('*')
+        .eq('user_id', telegramId)
+        .eq('status', 'active')
+        .gte('expires_at', new Date().toISOString())
         .single();
 
-      if (error) throw error;
-
-      // Update user's premium status
-      await supabaseAdmin
-        .from('users')
-        .update({
-          is_premium: true,
-          premium_plan: planType,
-          premium_expires_at: expiresAt.toISOString()
-        })
-        .eq('telegram_id', userId);
-
-      return data;
+      if (error && error.code !== 'PGRST116') throw error;
+      return !!subscription;
     } catch (error) {
-      console.error('Error creating subscription:', error);
-      throw error;
+      console.error('Error checking premium status:', error);
+      return false;
     }
   }
 
-  static async getUserSubscription(userId) {
+  static async getUserSubscription(telegramId) {
     try {
-      const { data, error } = await supabaseAdmin
+      const { data: subscription, error } = await supabaseAdmin
         .from('subscriptions')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', telegramId)
         .eq('status', 'active')
-        .gt('expires_at', new Date().toISOString())
+        .gte('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
 
       if (error && error.code !== 'PGRST116') throw error;
-      return data;
+      return subscription;
     } catch (error) {
       console.error('Error fetching user subscription:', error);
       return null;
     }
   }
 
-  static async isUserPremium(userId) {
-    const subscription = await this.getUserSubscription(userId);
-    return !!subscription;
-  }
-
-  static async getUserPremiumFeatures(userId) {
-    const subscription = await this.getUserSubscription(userId);
-    if (!subscription) return null;
-
-    const plan = this.subscriptionPlans[subscription.plan_type];
-    return {
-      planType: subscription.plan_type,
-      planName: plan.name,
-      features: plan.features,
-      expiresAt: subscription.expires_at
-    };
-  }
-
-  static async cancelSubscription(userId) {
+  static async createSubscription(telegramId, planType, paymentMethod, transactionId, amountPaid) {
     try {
-      const { error } = await supabaseAdmin
+      const plan = this.subscriptionPlans[planType];
+      if (!plan) throw new Error('Invalid plan type');
+
+      const startDate = new Date();
+      const expiryDate = plan.duration ? new Date(startDate.getTime() + (plan.duration * 24 * 60 * 60 * 1000)) : null;
+
+      const subscriptionData = {
+        user_id: telegramId,
+        plan_type: planType,
+        status: 'active',
+        payment_method: paymentMethod,
+        transaction_id: transactionId,
+        amount_paid: amountPaid,
+        starts_at: startDate.toISOString(),
+        expires_at: expiryDate ? expiryDate.toISOString() : null,
+        created_at: startDate.toISOString()
+      };
+
+      const { data: subscription, error } = await supabaseAdmin
         .from('subscriptions')
-        .update({
-          status: 'cancelled',
-          cancelled_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .eq('status', 'active');
+        .insert(subscriptionData)
+        .select()
+        .single();
 
       if (error) throw error;
 
-      // Update user's premium status
+      // Update user premium status
+      await supabaseAdmin
+        .from('users')
+        .update({
+          is_premium: true,
+          premium_plan: planType,
+          premium_expires_at: expiryDate ? expiryDate.toISOString() : null
+        })
+        .eq('telegram_id', telegramId);
+
+      return subscription;
+    } catch (error) {
+      console.error('Error creating subscription:', error);
+      throw error;
+    }
+  }
+
+  static async cancelSubscription(subscriptionId, reason = null) {
+    try {
+      const { data: subscription, error } = await supabaseAdmin
+        .from('subscriptions')
+        .update({
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+          cancellation_reason: reason
+        })
+        .eq('id', subscriptionId)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Update user premium status
       await supabaseAdmin
         .from('users')
         .update({
@@ -149,72 +150,145 @@ export class SubscriptionService {
           premium_plan: null,
           premium_expires_at: null
         })
-        .eq('telegram_id', userId);
+        .eq('telegram_id', subscription.user_id);
 
-      return true;
+      return subscription;
     } catch (error) {
       console.error('Error cancelling subscription:', error);
-      return false;
+      throw error;
     }
   }
 
   static async checkExpiredSubscriptions() {
     try {
-      const { data: expiredSubs, error } = await supabaseAdmin
+      const { data: expiredSubscriptions, error } = await supabaseAdmin
         .from('subscriptions')
         .select('*')
         .eq('status', 'active')
-        .lt('expires_at', new Date().toISOString());
+        .lt('expires_at', new Date().toISOString())
+        .neq('expires_at', null); // Exclude lifetime plans
 
       if (error) throw error;
 
-      for (const subscription of expiredSubs || []) {
-        await this.cancelSubscription(subscription.user_id);
+      for (const subscription of expiredSubscriptions || []) {
+        // Update subscription status
+        await supabaseAdmin
+          .from('subscriptions')
+          .update({
+            status: 'expired',
+            expired_at: new Date().toISOString()
+          })
+          .eq('id', subscription.id);
+
+        // Update user premium status
+        await supabaseAdmin
+          .from('users')
+          .update({
+            is_premium: false,
+            premium_plan: null,
+            premium_expires_at: null
+          })
+          .eq('telegram_id', subscription.user_id);
       }
 
-      console.log(`✅ Processed ${expiredSubs?.length || 0} expired subscriptions`);
+      console.log(`✅ Processed ${expiredSubscriptions?.length || 0} expired subscriptions`);
     } catch (error) {
       console.error('Error checking expired subscriptions:', error);
     }
   }
 
-  static async recordPayment(userId, amount, currency, paymentMethod, transactionId, status = 'completed') {
+  static async renewSubscription(subscriptionId, transactionId, amountPaid) {
     try {
-      const { data, error } = await supabaseAdmin
-        .from('payments')
-        .insert({
-          user_id: userId,
-          amount: amount,
-          currency: currency,
-          payment_method: paymentMethod,
-          transaction_id: transactionId,
-          status: status,
-          created_at: new Date().toISOString()
+      const { data: subscription, error: fetchError } = await supabaseAdmin
+        .from('subscriptions')
+        .select('*')
+        .eq('id', subscriptionId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      const plan = this.subscriptionPlans[subscription.plan_type];
+      if (!plan) throw new Error('Invalid plan type');
+
+      const startDate = new Date();
+      const expiryDate = plan.duration ? new Date(startDate.getTime() + (plan.duration * 24 * 60 * 60 * 1000)) : null;
+
+      const { data: updatedSubscription, error } = await supabaseAdmin
+        .from('subscriptions')
+        .update({
+          status: 'active',
+          last_payment_transaction_id: transactionId,
+          last_payment_amount: amountPaid,
+          last_payment_date: startDate.toISOString(),
+          expires_at: expiryDate ? expiryDate.toISOString() : null,
+          updated_at: startDate.toISOString()
         })
+        .eq('id', subscriptionId)
         .select()
         .single();
 
       if (error) throw error;
-      return data;
+
+      // Update user premium status
+      await supabaseAdmin
+        .from('users')
+        .update({
+          is_premium: true,
+          premium_plan: subscription.plan_type,
+          premium_expires_at: expiryDate ? expiryDate.toISOString() : null
+        })
+        .eq('telegram_id', subscription.user_id);
+
+      return updatedSubscription;
     } catch (error) {
-      console.error('Error recording payment:', error);
+      console.error('Error renewing subscription:', error);
       throw error;
     }
   }
 
-  static async getUserPaymentHistory(userId) {
+  static async getUserSubscriptionHistory(telegramId) {
     try {
-      const { data, error } = await supabaseAdmin
-        .from('payments')
+      const { data: subscriptions, error } = await supabaseAdmin
+        .from('subscriptions')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', telegramId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      return data || [];
+      return subscriptions || [];
     } catch (error) {
-      console.error('Error fetching payment history:', error);
+      console.error('Error fetching subscription history:', error);
       return [];
+    }
+  }
+
+  static async getSubscriptionStats() {
+    try {
+      const { data: stats, error } = await supabaseAdmin
+        .from('subscriptions')
+        .select('plan_type, status, amount_paid')
+        .eq('status', 'active');
+
+      if (error) throw error;
+
+      const totalRevenue = stats?.reduce((sum, sub) => sum + (sub.amount_paid || 0), 0) || 0;
+      const planCounts = stats?.reduce((acc, sub) => {
+        acc[sub.plan_type] = (acc[sub.plan_type] || 0) + 1;
+        return acc;
+      }, {}) || {};
+
+      return {
+        totalActiveSubscriptions: stats?.length || 0,
+        totalRevenue,
+        planBreakdown: planCounts
+      };
+    } catch (error) {
+      console.error('Error fetching subscription stats:', error);
+      return {
+        totalActiveSubscriptions: 0,
+        totalRevenue: 0,
+        planBreakdown: {}
+      };
     }
   }
 }

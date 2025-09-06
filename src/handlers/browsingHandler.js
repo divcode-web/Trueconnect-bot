@@ -2,10 +2,13 @@ import { MatchingService } from '../services/matchingService.js';
 import { UserService } from '../services/userService.js';
 import { SubscriptionService } from '../services/subscriptionService.js';
 import { BrowsingService } from '../services/browsingService.js';
+import { VerificationService } from '../services/verificationService.js';
+import { ReportService } from '../services/reportService.js';
 import { bot, keyboards, botConfig } from '../config/telegram.js';
 
 export class BrowsingHandler {
   static userBrowsingState = new Map();
+  static dailyLikes = new Map(); // Track daily likes for free users
 
   static async startBrowsing(chatId, userId) {
     try {
@@ -34,12 +37,33 @@ export class BrowsingHandler {
         return;
       }
 
+      // Check daily like limit for free users
+      const isPremium = await SubscriptionService.isUserPremium(userId);
+      if (!isPremium) {
+        const todayLikes = this.getTodayLikes(userId);
+        if (todayLikes >= 20) { // Free users get 20 likes per day
+          await bot.sendMessage(chatId, 
+            '💔 Daily Like Limit Reached\n\n' +
+            'You\'ve used all your likes for today! Upgrade to premium for unlimited likes.',
+            keyboards.premiumPlans
+          );
+          return;
+        }
+      }
+
       const matches = await MatchingService.findPotentialMatches(userId, 20);
       
       if (matches.length === 0) {
         await bot.sendMessage(chatId, 
           'No more matches found in your area. Try expanding your search radius or check back later!',
-          keyboards.mainMenu
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '⚙️ Update Preferences', callback_data: 'settings_preferences' }],
+                [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
+              ]
+            }
+          }
         );
         return;
       }
@@ -66,7 +90,14 @@ export class BrowsingHandler {
     if (!state || state.currentIndex >= state.matches.length) {
       await bot.sendMessage(chatId, 
         'You\'ve seen all available matches! Check back later for more.',
-        keyboards.mainMenu
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔄 Load More', callback_data: 'browse_reload' }],
+              [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
+            ]
+          }
+        }
       );
       this.userBrowsingState.delete(userId);
       return;
@@ -76,7 +107,7 @@ export class BrowsingHandler {
     
     // Check for channel promotion
     state.channelPromptCounter++;
-    if (state.channelPromptCounter % botConfig.channelPromotionFrequency === 0) {
+    if (botConfig.channelPromotionFrequency && state.channelPromptCounter % botConfig.channelPromotionFrequency === 0) {
       await this.showChannelPromotion(chatId, userId);
       return;
     }
@@ -101,7 +132,7 @@ export class BrowsingHandler {
       }
 
       if (profile.education) {
-        profileText += `🎓 ${profile.education.replace('_', ' ')}\n`;
+        profileText += `🎓 ${this.formatEducation(profile.education)}\n`;
       }
 
       if (profile.height) {
@@ -109,7 +140,11 @@ export class BrowsingHandler {
       }
 
       if (profile.interests) {
-        profileText += `💫 ${profile.interests}\n`;
+        profileText += `🎯 ${profile.interests}\n`;
+      }
+
+      if (profile.lifestyle) {
+        profileText += `🌟 ${profile.lifestyle}\n`;
       }
 
       if (profile.is_verified) {
@@ -124,15 +159,18 @@ export class BrowsingHandler {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: '❌ Pass', callback_data: 'swipe_pass' },
-              { text: '💕 Like', callback_data: 'swipe_like' },
-              { text: '⭐ Super Like', callback_data: 'swipe_super_like' }
+              { text: '❌', callback_data: 'swipe_pass' },
+              { text: '💕', callback_data: 'swipe_like' },
+              { text: '⭐', callback_data: 'swipe_super_like' }
             ],
             [
-              { text: '📸 More Photos', callback_data: `photos_${profile.telegram_id}` },
-              { text: '🚫 Report', callback_data: `report_${profile.telegram_id}` }
+              { text: '📸 Photos', callback_data: `browse_photos_${profile.telegram_id}` },
+              { text: '📋 Full Profile', callback_data: `browse_profile_${profile.telegram_id}` }
             ],
-            [{ text: '🔙 Back to Menu', callback_data: 'main_menu' }]
+            [
+              { text: '🚫 Report', callback_data: `report_user_${profile.telegram_id}` },
+              { text: '🔙 Menu', callback_data: 'main_menu' }
+            ]
           ]
         }
       };
@@ -150,11 +188,17 @@ export class BrowsingHandler {
       await bot.sendMessage(chatId, 
         'Error loading profile. Skipping to next match...'
       );
-      await this.handleSwipe(chatId, userId, 'pass');
+      await this.handleSwipe(chatId, null, 'pass');
     }
   }
 
   static async showChannelPromotion(chatId, userId) {
+    if (!botConfig.channelUsername) {
+      // Skip promotion if no channel configured
+      await this.showNextMatch(chatId, userId);
+      return;
+    }
+
     const promotionMessages = [
       `💡 Pro tip: Subscribe to ${botConfig.channelUsername} for dating advice and success stories!`,
       `🌟 Join ${botConfig.channelUsername} for exclusive dating tips!`,
@@ -173,6 +217,33 @@ export class BrowsingHandler {
     });
   }
 
+  // Fixed: Callback handlers for browsing actions
+  static async handleLike(query, user) {
+    await this.handleSwipe(query.message.chat.id, user.telegram_id, 'like');
+    await bot.answerCallbackQuery(query.id, { text: '💕 Liked!' });
+  }
+
+  static async handlePass(query, user) {
+    await this.handleSwipe(query.message.chat.id, user.telegram_id, 'pass');
+    await bot.answerCallbackQuery(query.id, { text: '👋 Passed' });
+  }
+
+  static async handleSuperLike(query, user) {
+    const isPremium = await SubscriptionService.isUserPremium(user.telegram_id);
+    if (!isPremium) {
+      await bot.answerCallbackQuery(query.id, { text: '⭐ Premium feature!' });
+      await bot.sendMessage(query.message.chat.id, 
+        '⭐ Super Likes are a premium feature!\n\n' +
+        'Upgrade to premium to send unlimited super likes and get better matches.',
+        keyboards.premiumPlans
+      );
+      return;
+    }
+    
+    await this.handleSwipe(query.message.chat.id, user.telegram_id, 'super_like');
+    await bot.answerCallbackQuery(query.id, { text: '⭐ Super liked!' });
+  }
+
   static async handleSwipe(chatId, userId, action) {
     try {
       const state = this.userBrowsingState.get(userId);
@@ -183,16 +254,20 @@ export class BrowsingHandler {
 
       const currentMatch = state.matches[state.currentIndex];
       
-      // Check subscription limits for free users
-      if (action === 'super_like') {
+      // Check daily limits for free users
+      if ((action === 'like' || action === 'super_like')) {
         const isPremium = await SubscriptionService.isUserPremium(userId);
         if (!isPremium) {
-          await bot.sendMessage(chatId, 
-            '⭐ Super Likes are a premium feature!\n\n' +
-            'Upgrade to premium to send unlimited super likes and get better matches.',
-            keyboards.premiumPlans
-          );
-          return;
+          const todayLikes = this.getTodayLikes(userId);
+          if (todayLikes >= 20) {
+            await bot.sendMessage(chatId, 
+              '💔 Daily Like Limit Reached\n\n' +
+              'You\'ve used all your likes for today! Upgrade to premium for unlimited likes.',
+              keyboards.premiumPlans
+            );
+            return;
+          }
+          this.incrementTodayLikes(userId);
         }
       }
 
@@ -202,19 +277,17 @@ export class BrowsingHandler {
       if (result.match) {
         await this.handleNewMatch(chatId, userId, currentMatch, result.match);
       } else if (action === 'like' || action === 'super_like') {
-        const messages = [
-          '💕 Like sent!',
-          '⭐ Super like sent! They\'ll know you\'re really interested!',
-          '👍 Nice choice!'
-        ];
-        await bot.sendMessage(chatId, 
-          action === 'super_like' ? messages[1] : messages[0]
-        );
+        // Optional: Show brief feedback
+        if (action === 'super_like') {
+          await bot.sendMessage(chatId, '⭐ Super like sent!');
+        }
       }
 
       // Move to next match
       state.currentIndex++;
-      await this.showNextMatch(chatId, userId);
+      setTimeout(() => {
+        this.showNextMatch(chatId, userId);
+      }, 1000); // Brief delay for better UX
 
     } catch (error) {
       console.error('Error handling swipe:', error);
@@ -259,55 +332,120 @@ export class BrowsingHandler {
     }
   }
 
+  static async showProfile(chatId, userId, targetUserId) {
+    try {
+      const profile = await UserService.getUserByTelegramId(targetUserId);
+      if (!profile) {
+        await bot.sendMessage(chatId, 'Profile not found.');
+        return;
+      }
+
+      const photos = await UserService.getUserPhotos(targetUserId);
+      
+      let profileText = `${profile.first_name}, ${profile.age}\n\n`;
+      
+      if (profile.bio) {
+        profileText += `📋 About:\n${profile.bio}\n\n`;
+      }
+
+      if (profile.profession) {
+        profileText += `💼 Work: ${profile.profession}\n`;
+      }
+
+      if (profile.education) {
+        profileText += `🎓 Education: ${this.formatEducation(profile.education)}\n`;
+      }
+
+      if (profile.height) {
+        profileText += `📏 Height: ${profile.height}\n`;
+      }
+
+      if (profile.interests) {
+        profileText += `🎯 Interests: ${profile.interests}\n`;
+      }
+
+      if (profile.lifestyle) {
+        profileText += `🌟 Lifestyle: ${profile.lifestyle}\n`;
+      }
+
+      if (profile.looking_for) {
+        profileText += `💕 Looking for: ${this.formatLookingFor(profile.looking_for)}\n`;
+      }
+
+      if (profile.is_verified) {
+        profileText += `\n✅ Verified Profile`;
+      }
+
+      profileText += `\n📸 ${photos.length} photo${photos.length !== 1 ? 's' : ''}`;
+
+      await bot.sendMessage(chatId, profileText, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📸 View Photos', callback_data: `browse_photos_${targetUserId}` }],
+            [{ text: '🔙 Back to Browsing', callback_data: 'browse' }]
+          ]
+        }
+      });
+    } catch (error) {
+      console.error('Error showing profile:', error);
+      await bot.sendMessage(chatId, 'Error loading profile.');
+    }
+  }
+
   static async showUserPhotos(chatId, userId, targetUserId) {
     try {
       const photos = await UserService.getUserPhotos(targetUserId);
       
-      if (photos.length <= 1) {
+      if (photos.length === 0) {
+        await bot.sendMessage(chatId, 'This user has no photos.');
+        return;
+      }
+
+      if (photos.length === 1) {
         await bot.sendMessage(chatId, 'This user has only one photo.');
         return;
       }
 
-      for (let i = 1; i < photos.length; i++) {
-        await bot.sendPhoto(chatId, photos[i].file_id, {
-          caption: `Photo ${i + 1} of ${photos.length}`
+      // Show all photos
+      for (let i = 0; i < photos.length; i++) {
+        const photo = photos[i];
+        const caption = `Photo ${i + 1} of ${photos.length}${photo.is_primary ? ' (Primary)' : ''}`;
+        
+        await bot.sendPhoto(chatId, photo.file_id, {
+          caption: caption
         });
+        
+        // Add small delay between photos
+        if (i < photos.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
 
-      await bot.sendMessage(chatId, 'Back to profile:', keyboards.browsingActions);
+      await bot.sendMessage(chatId, 'Back to browsing:', {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '❌', callback_data: 'swipe_pass' },
+              { text: '💕', callback_data: 'swipe_like' },
+              { text: '⭐', callback_data: 'swipe_super_like' }
+            ],
+            [{ text: '🔙 Back to Browsing', callback_data: 'browse' }]
+          ]
+        }
+      });
     } catch (error) {
       console.error('Error showing user photos:', error);
       await bot.sendMessage(chatId, 'Error loading photos.');
     }
   }
 
-  static formatDistance(distance) {
-    return Math.round(distance * 10) / 10; // Round to 1 decimal place
-  }
-
   static async continueBrowsing(chatId, userId) {
     await this.showNextMatch(chatId, userId);
   }
 
-  static async updateLocation(chatId, userId) {
-    await bot.sendMessage(chatId, 
-      '📍 Update Location\n\n' +
-      'To find matches near you, please share your current location.\n\n' +
-      'Your location is used to:\n' +
-      '• Find matches within your preferred distance\n' +
-      '• Show accurate distance to potential matches\n' +
-      '• Improve matching algorithm\n\n' +
-      'Click the button below to share your location:',
-      {
-        reply_markup: {
-          keyboard: [
-            [{ text: '📍 Share Location', request_location: true }]
-          ],
-          resize_keyboard: true,
-          one_time_keyboard: true
-        }
-      }
-    );
+  static async reloadMatches(chatId, userId) {
+    this.userBrowsingState.delete(userId);
+    await this.startBrowsing(chatId, userId);
   }
 
   static async handleLocationUpdate(msg) {
@@ -342,7 +480,7 @@ export class BrowsingHandler {
       });
       
       // Record location verification
-      await VerificationService.recordLocationVerification(userId, lat, lon, msg.location.horizontal_accuracy);
+      await VerificationService.recordLocationVerification(userId, lat, lon, msg.location.horizontal_accuracy || 0);
       
       await bot.sendMessage(chatId, 
         '✅ Location Updated!\n\n' +
@@ -351,7 +489,7 @@ export class BrowsingHandler {
           reply_markup: {
             inline_keyboard: [
               [{ text: '💕 Start Browsing', callback_data: 'browse' }],
-              [{ text: '🔙 Back to Settings', callback_data: 'settings' }]
+              [{ text: '🔙 Back to Menu', callback_data: 'main_menu' }]
             ]
           }
         }
@@ -365,21 +503,82 @@ export class BrowsingHandler {
     }
   }
 
-  static async handleBrowseMatches(msg, user) {
-    const matches = await BrowsingService.browseMatches(user.telegram_id);
-    if (!matches || matches.length === 0) {
-      await bot.sendMessage(msg.chat.id, 'No matches found. Try updating your preferences!');
-    } else {
-      const matchList = matches.map(m => `• ${m.first_name} (@${m.username})`).join('\n');
-      await bot.sendMessage(msg.chat.id, `Browse matches:\n${matchList}`);
+  static async requestLocationUpdate(chatId) {
+    await bot.sendMessage(chatId, 
+      '📍 Update Location\n\n' +
+      'To find matches near you, please share your current location.\n\n' +
+      'Your location is used to:\n' +
+      '• Find matches within your preferred distance\n' +
+      '• Show accurate distance to potential matches\n' +
+      '• Improve matching algorithm\n\n' +
+      'Your exact location is never shown to other users.',
+      {
+        reply_markup: {
+          keyboard: [
+            [{ text: '📍 Share Location', request_location: true }]
+          ],
+          resize_keyboard: true,
+          one_time_keyboard: true
+        }
+      }
+    );
+  }
+
+  // Helper methods
+  static formatDistance(distance) {
+    if (distance < 1) {
+      return '<1';
+    }
+    return Math.round(distance * 10) / 10; // Round to 1 decimal place
+  }
+
+  static formatEducation(education) {
+    const educationMap = {
+      'high_school': 'High School',
+      'some_college': 'Some College',
+      'bachelors': "Bachelor's Degree",
+      'masters': "Master's Degree",
+      'phd': 'PhD'
+    };
+    return educationMap[education] || education;
+  }
+
+  static formatLookingFor(lookingFor) {
+    const lookingForMap = {
+      'relationship': 'Long-term relationship',
+      'casual': 'Casual dating',
+      'marriage': 'Marriage',
+      'friends': 'Friends'
+    };
+    return lookingForMap[lookingFor] || lookingFor;
+  }
+
+  // Daily likes tracking for free users
+  static getTodayLikes(userId) {
+    const today = new Date().toDateString();
+    const userKey = `${userId}_${today}`;
+    return this.dailyLikes.get(userKey) || 0;
+  }
+
+  static incrementTodayLikes(userId) {
+    const today = new Date().toDateString();
+    const userKey = `${userId}_${today}`;
+    const current = this.dailyLikes.get(userKey) || 0;
+    this.dailyLikes.set(userKey, current + 1);
+  }
+
+  // Clean up old daily like counts (run this daily)
+  static cleanupDailyLikes() {
+    const today = new Date().toDateString();
+    for (const [key, value] of this.dailyLikes.entries()) {
+      if (!key.includes(today)) {
+        this.dailyLikes.delete(key);
+      }
     }
   }
 
-  static async handleLocationUpdate(msg) {
-    const userId = msg.from.id;
-    const lat = msg.location.latitude;
-    const lon = msg.location.longitude;
-    await BrowsingService.updateLocation(userId, lat, lon);
-    await bot.sendMessage(msg.chat.id, '✅ Location updated!');
+  // Legacy methods for backward compatibility
+  static async handleBrowseMatches(msg, user) {
+    await this.startBrowsing(msg.chat.id, user.telegram_id);
   }
 }

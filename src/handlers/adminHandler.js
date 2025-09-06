@@ -112,10 +112,17 @@ export class AdminHandler {
         .from('matches')
         .select('*', { count: 'exact', head: true });
 
-      // Get message statistics
-      const { count: totalMessages } = await supabaseAdmin
-        .from('messages')
-        .select('*', { count: 'exact', head: true });
+      // Get message statistics (only if messages table exists)
+      let totalMessages = 0;
+      try {
+        const { count } = await supabaseAdmin
+          .from('messages')
+          .select('*', { count: 'exact', head: true });
+        totalMessages = count || 0;
+      } catch (error) {
+        // Table might not exist yet
+        console.log('Messages table not found, defaulting to 0');
+      }
 
       // Get report statistics
       const { count: pendingReports } = await supabaseAdmin
@@ -132,7 +139,7 @@ export class AdminHandler {
         `👩 Female Users: ${femaleUsers}\n` +
         `📅 Today's Signups: ${todayUsers}\n\n` +
         `💕 Total Matches: ${totalMatches || 0}\n` +
-        `💬 Total Messages: ${totalMessages || 0}\n` +
+        `💬 Total Messages: ${totalMessages}\n` +
         `🚨 Pending Reports: ${pendingReports || 0}`;
 
       await bot.sendMessage(chatId, statsText, {
@@ -171,8 +178,8 @@ export class AdminHandler {
       
       reports.slice(0, 5).forEach((report, index) => {
         reportsText += `${index + 1}. ${ReportService.reportTypes[report.report_type]}\n`;
-        reportsText += `   Reporter: ${report.reporter.first_name}\n`;
-        reportsText += `   Reported: ${report.reported.first_name}\n`;
+        reportsText += `   Reporter: ${report.reporter?.first_name || 'Unknown'}\n`;
+        reportsText += `   Reported: ${report.reported?.first_name || 'Unknown'}\n`;
         reportsText += `   Date: ${new Date(report.created_at).toLocaleDateString()}\n\n`;
       });
 
@@ -184,7 +191,7 @@ export class AdminHandler {
         reply_markup: {
           inline_keyboard: [
             ...reports.slice(0, 5).map((report, index) => [
-              { text: `Review Report ${index + 1}`, callback_data: `review_report_${report.id}` }
+              { text: `Review Report ${index + 1}`, callback_data: `admin_review_report_${report.id}` }
             ]),
             [{ text: '🔙 Back', callback_data: 'admin_menu' }]
           ]
@@ -219,8 +226,8 @@ export class AdminHandler {
       let verificationsText = `✅ Pending Verifications (${verifications.length})\n\n`;
       
       verifications.slice(0, 5).forEach((verification, index) => {
-        verificationsText += `${index + 1}. ${verification.user.first_name}\n`;
-        verificationsText += `   User ID: ${verification.user.telegram_id}\n`;
+        verificationsText += `${index + 1}. ${verification.user?.first_name || 'Unknown'}\n`;
+        verificationsText += `   User ID: ${verification.user?.telegram_id || 'Unknown'}\n`;
         verificationsText += `   Submitted: ${new Date(verification.submitted_at).toLocaleDateString()}\n\n`;
       });
 
@@ -228,7 +235,7 @@ export class AdminHandler {
         reply_markup: {
           inline_keyboard: [
             ...verifications.slice(0, 5).map((verification, index) => [
-              { text: `Review Verification ${index + 1}`, callback_data: `review_verification_${verification.id}` }
+              { text: `Review Verification ${index + 1}`, callback_data: `admin_review_verification_${verification.id}` }
             ]),
             [{ text: '🔙 Back', callback_data: 'admin_menu' }]
           ]
@@ -258,8 +265,8 @@ export class AdminHandler {
 
       const reportText = `🚨 Report Review\n\n` +
         `Type: ${ReportService.reportTypes[report.report_type]}\n` +
-        `Reporter: ${report.reporter.first_name} (@${report.reporter.username || 'N/A'})\n` +
-        `Reported User: ${report.reported.first_name} (@${report.reported.username || 'N/A'})\n` +
+        `Reporter: ${report.reporter?.first_name || 'Unknown'} (@${report.reporter?.username || 'N/A'})\n` +
+        `Reported User: ${report.reported?.first_name || 'Unknown'} (@${report.reported?.username || 'N/A'})\n` +
         `Date: ${new Date(report.created_at).toLocaleString()}\n\n` +
         `Description:\n${report.description}\n\n` +
         `Choose an action:`;
@@ -268,14 +275,14 @@ export class AdminHandler {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: '⚠️ Warn User', callback_data: `report_action_warn_${reportId}` },
-              { text: '⏸️ Suspend User', callback_data: `report_action_suspend_${reportId}` }
+              { text: '⚠️ Warn User', callback_data: `admin_report_action_warn_${reportId}` },
+              { text: '⏸️ Suspend User', callback_data: `admin_report_action_suspend_${reportId}` }
             ],
             [
-              { text: '🚫 Ban User', callback_data: `report_action_ban_${reportId}` },
-              { text: '❌ Dismiss Report', callback_data: `report_action_dismiss_${reportId}` }
+              { text: '🚫 Ban User', callback_data: `admin_report_action_ban_${reportId}` },
+              { text: '❌ Dismiss Report', callback_data: `admin_report_action_dismiss_${reportId}` }
             ],
-            [{ text: '👤 View User Profile', callback_data: `admin_user_${report.reported.telegram_id}` }],
+            [{ text: '👤 View User Profile', callback_data: `admin_user_${report.reported?.telegram_id}` }],
             [{ text: '🔙 Back', callback_data: 'admin_reports' }]
           ]
         }
@@ -344,30 +351,53 @@ export class AdminHandler {
 
       if (error) throw error;
 
-      // Get the verification photo URL
-      const { data: photoUrl } = await supabaseAdmin.storage
-        .from('verification-photos')
-        .createSignedUrl(verification.photo_url, 3600); // 1 hour expiry
-
       const verificationText = `✅ Verification Review\n\n` +
-        `User: ${verification.user.first_name} (@${verification.user.username || 'N/A'})\n` +
-        `User ID: ${verification.user.telegram_id}\n` +
+        `User: ${verification.user?.first_name || 'Unknown'} (@${verification.user?.username || 'N/A'})\n` +
+        `User ID: ${verification.user?.telegram_id || 'Unknown'}\n` +
         `Submitted: ${new Date(verification.submitted_at).toLocaleString()}\n\n` +
-        `Review the verification photo and decide:`;
+        `Review the verification photo/video and decide:`;
 
-      await bot.sendPhoto(chatId, photoUrl.signedUrl, {
-        caption: verificationText,
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '✅ Approve', callback_data: `verify_approve_${verificationId}` },
-              { text: '❌ Reject', callback_data: `verify_reject_${verificationId}` }
-            ],
-            [{ text: '👤 View User Profile', callback_data: `admin_user_${verification.user.telegram_id}` }],
-            [{ text: '🔙 Back', callback_data: 'admin_verifications' }]
-          ]
+      // Try to get verification media URL
+      let mediaUrl = null;
+      if (verification.photo_url) {
+        try {
+          const { data: urlData } = await supabaseAdmin.storage
+            .from('verification-photos')
+            .createSignedUrl(verification.photo_url, 3600);
+          mediaUrl = urlData?.signedUrl;
+        } catch (urlError) {
+          console.error('Error getting verification media URL:', urlError);
         }
-      });
+      }
+
+      if (mediaUrl) {
+        await bot.sendPhoto(chatId, mediaUrl, {
+          caption: verificationText,
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Approve', callback_data: `admin_verify_approve_${verificationId}` },
+                { text: '❌ Reject', callback_data: `admin_verify_reject_${verificationId}` }
+              ],
+              [{ text: '👤 View User Profile', callback_data: `admin_user_${verification.user?.telegram_id}` }],
+              [{ text: '🔙 Back', callback_data: 'admin_verifications' }]
+            ]
+          }
+        });
+      } else {
+        await bot.sendMessage(chatId, verificationText, {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Approve', callback_data: `admin_verify_approve_${verificationId}` },
+                { text: '❌ Reject', callback_data: `admin_verify_reject_${verificationId}` }
+              ],
+              [{ text: '👤 View User Profile', callback_data: `admin_user_${verification.user?.telegram_id}` }],
+              [{ text: '🔙 Back', callback_data: 'admin_verifications' }]
+            ]
+          }
+        });
+      }
     } catch (error) {
       console.error('Error reviewing verification:', error);
       await bot.sendMessage(chatId, 'Error loading verification details.');
@@ -472,7 +502,7 @@ export class AdminHandler {
           inline_keyboard: [
             [{ text: '👤 My Profile', callback_data: 'profile' }],
             [{ text: '💕 Browse Matches', callback_data: 'browse' }],
-            [{ text: '💬 My Matches', callback_data: 'matches' }],
+            [{ text: '👥 My Matches', callback_data: 'matches' }],
             [{ text: '💎 Premium', callback_data: 'premium' }],
             [{ text: '🔧 Back to Admin', callback_data: 'admin_menu' }]
           ]
@@ -492,15 +522,16 @@ export class AdminHandler {
         .eq('status', 'active')
         .order('created_at', { ascending: false })
         .limit(10);
+      
       if (error) throw error;
 
       let subsText = `💎 Active Subscriptions (${subscriptions?.length || 0})\n\n`;
       
       subscriptions?.forEach((sub, index) => {
-        subsText += `${index + 1}. ${sub.user.first_name} (@${sub.user.username || 'N/A'})\n`;
+        subsText += `${index + 1}. ${sub.user?.first_name || 'Unknown'} (@${sub.user?.username || 'N/A'})\n`;
         subsText += `   Plan: ${sub.plan_type.toUpperCase()}\n`;
-        subsText += `   Expires: ${new Date(sub.expires_at).toLocaleDateString()}\n`;
-        subsText += `   Amount: $${sub.amount_paid}\n\n`;
+        subsText += `   Expires: ${sub.expires_at ? new Date(sub.expires_at).toLocaleDateString() : 'Never'}\n`;
+        subsText += `   Amount: ${sub.amount_paid || 'N/A'}\n\n`;
       });
 
       await bot.sendMessage(chatId, subsText, {
@@ -516,4 +547,4 @@ export class AdminHandler {
       await bot.sendMessage(chatId, 'Error loading subscriptions.');
     }
   }
-} 
+}
