@@ -18,6 +18,7 @@ export class AdminHandler {
     }
 
     const command = msg.text?.split(' ')[0] || '';
+    const args = msg.text?.split(' ').slice(1) || [];
     
     switch (command) {
       case '/admin':
@@ -44,6 +45,20 @@ export class AdminHandler {
       case '/test_user':
         await this.handleTestUserMode(msg);
         break;
+      case '/user':
+        if (args.length > 0) {
+          await this.handleUserCommand(msg.chat.id, args[0]);
+        } else {
+          await bot.sendMessage(msg.chat.id, 'Usage: /user <telegram_id>');
+        }
+        break;
+      case '/broadcast':
+        if (args.length > 0) {
+          await this.handleBroadcast(msg.chat.id, args.join(' '));
+        } else {
+          await bot.sendMessage(msg.chat.id, 'Usage: /broadcast <message>');
+        }
+        break;
       default:
         await bot.sendMessage(msg.chat.id, 
           'Unknown admin command. Available commands:\n' +
@@ -54,7 +69,9 @@ export class AdminHandler {
           '/ban <user_id> [reason] - Ban user\n' +
           '/unban <user_id> - Unban user\n' +
           '/suspend <user_id> <days> [reason] - Suspend user\n' +
-          '/test_user - Test user mode'
+          '/test_user - Test user mode\n' +
+          '/user <user_id> - View user info\n' +
+          '/broadcast <message> - Broadcast message to all users'
         );
     }
   }
@@ -120,7 +137,6 @@ export class AdminHandler {
           .select('*', { count: 'exact', head: true });
         totalMessages = count || 0;
       } catch (error) {
-        // Table might not exist yet
         console.log('Messages table not found, defaulting to 0');
       }
 
@@ -177,7 +193,7 @@ export class AdminHandler {
       let reportsText = `🚨 Pending Reports (${reports.length})\n\n`;
       
       reports.slice(0, 5).forEach((report, index) => {
-        reportsText += `${index + 1}. ${ReportService.reportTypes[report.report_type]}\n`;
+        reportsText += `${index + 1}. ${ReportService.reportTypes[report.report_type] || report.report_type}\n`;
         reportsText += `   Reporter: ${report.reporter?.first_name || 'Unknown'}\n`;
         reportsText += `   Reported: ${report.reported?.first_name || 'Unknown'}\n`;
         reportsText += `   Date: ${new Date(report.created_at).toLocaleDateString()}\n\n`;
@@ -263,12 +279,21 @@ export class AdminHandler {
 
       if (error) throw error;
 
+      const reportTypes = {
+        'fake_profile': 'Fake Profile',
+        'harassment': 'Harassment', 
+        'inappropriate_content': 'Inappropriate Content',
+        'spam': 'Spam',
+        'underage': 'Underage',
+        'other': 'Other'
+      };
+
       const reportText = `🚨 Report Review\n\n` +
-        `Type: ${ReportService.reportTypes[report.report_type]}\n` +
+        `Type: ${reportTypes[report.report_type] || report.report_type}\n` +
         `Reporter: ${report.reporter?.first_name || 'Unknown'} (@${report.reporter?.username || 'N/A'})\n` +
         `Reported User: ${report.reported?.first_name || 'Unknown'} (@${report.reported?.username || 'N/A'})\n` +
         `Date: ${new Date(report.created_at).toLocaleString()}\n\n` +
-        `Description:\n${report.description}\n\n` +
+        `Description:\n${report.description || 'No description provided'}\n\n` +
         `Choose an action:`;
 
       await bot.sendMessage(chatId, reportText, {
@@ -297,7 +322,7 @@ export class AdminHandler {
     try {
       const { data: report } = await supabaseAdmin
         .from('reports')
-        .select('reported_id')
+        .select('reported_id, reported:users!reports_reported_id_fkey(*)')
         .eq('id', reportId)
         .single();
 
@@ -307,15 +332,48 @@ export class AdminHandler {
         case 'warn':
           await ReportService.resolveReport(reportId, botConfig.adminUserId, 'warn_user', 'User warned by admin');
           actionTaken = 'User has been warned';
+          
+          // Send warning to user
+          try {
+            await bot.sendMessage(report.reported.telegram_id, 
+              '⚠️ Warning\n\n' +
+              'You have received a warning from our moderation team. ' +
+              'Please ensure you follow our community guidelines to avoid further action.');
+          } catch (error) {
+            console.log('Could not send warning message to user');
+          }
           break;
+          
         case 'suspend':
           await ReportService.resolveReport(reportId, botConfig.adminUserId, 'suspend_user', '7-day suspension');
+          await this.suspendUserInternal(report.reported_id, 7, 'Suspended due to report');
           actionTaken = 'User has been suspended for 7 days';
+          
+          // Notify user
+          try {
+            await bot.sendMessage(report.reported.telegram_id, 
+              '⏸️ Account Suspended\n\n' +
+              'Your account has been suspended for 7 days due to a violation of our community guidelines.');
+          } catch (error) {
+            console.log('Could not send suspension message to user');
+          }
           break;
+          
         case 'ban':
           await ReportService.resolveReport(reportId, botConfig.adminUserId, 'ban_user', 'Banned due to report');
+          await this.banUserInternal(report.reported_id, 'Banned due to report');
           actionTaken = 'User has been permanently banned';
+          
+          // Notify user
+          try {
+            await bot.sendMessage(report.reported.telegram_id, 
+              '🚫 Account Banned\n\n' +
+              'Your account has been permanently banned due to violations of our community guidelines.');
+          } catch (error) {
+            console.log('Could not send ban message to user');
+          }
           break;
+          
         case 'dismiss':
           await ReportService.resolveReport(reportId, botConfig.adminUserId, 'no_action', 'Report dismissed');
           actionTaken = 'Report has been dismissed';
@@ -357,47 +415,36 @@ export class AdminHandler {
         `Submitted: ${new Date(verification.submitted_at).toLocaleString()}\n\n` +
         `Review the verification photo/video and decide:`;
 
-      // Try to get verification media URL
-      let mediaUrl = null;
-      if (verification.photo_url) {
+      // Try to get verification media
+      let mediaMessage = null;
+      if (verification.file_id) {
         try {
-          const { data: urlData } = await supabaseAdmin.storage
-            .from('verification-photos')
-            .createSignedUrl(verification.photo_url, 3600);
-          mediaUrl = urlData?.signedUrl;
-        } catch (urlError) {
-          console.error('Error getting verification media URL:', urlError);
+          if (verification.verification_type === 'face') {
+            mediaMessage = await bot.sendPhoto(chatId, verification.file_id, {
+              caption: verificationText
+            });
+          }
+        } catch (error) {
+          console.error('Error sending verification media:', error);
         }
       }
 
-      if (mediaUrl) {
-        await bot.sendPhoto(chatId, mediaUrl, {
-          caption: verificationText,
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ Approve', callback_data: `admin_verify_approve_${verificationId}` },
-                { text: '❌ Reject', callback_data: `admin_verify_reject_${verificationId}` }
-              ],
-              [{ text: '👤 View User Profile', callback_data: `admin_user_${verification.user?.telegram_id}` }],
-              [{ text: '🔙 Back', callback_data: 'admin_verifications' }]
-            ]
-          }
-        });
-      } else {
-        await bot.sendMessage(chatId, verificationText, {
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ Approve', callback_data: `admin_verify_approve_${verificationId}` },
-                { text: '❌ Reject', callback_data: `admin_verify_reject_${verificationId}` }
-              ],
-              [{ text: '👤 View User Profile', callback_data: `admin_user_${verification.user?.telegram_id}` }],
-              [{ text: '🔙 Back', callback_data: 'admin_verifications' }]
-            ]
-          }
-        });
+      if (!mediaMessage) {
+        await bot.sendMessage(chatId, verificationText);
       }
+
+      await bot.sendMessage(chatId, 'Actions:', {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Approve', callback_data: `admin_verify_approve_${verificationId}` },
+              { text: '❌ Reject', callback_data: `admin_verify_reject_${verificationId}` }
+            ],
+            [{ text: '👤 View User Profile', callback_data: `admin_user_${verification.user?.telegram_id}` }],
+            [{ text: '🔙 Back', callback_data: 'admin_verifications' }]
+          ]
+        }
+      });
     } catch (error) {
       console.error('Error reviewing verification:', error);
       await bot.sendMessage(chatId, 'Error loading verification details.');
@@ -411,9 +458,48 @@ export class AdminHandler {
       if (action === 'approve') {
         await VerificationService.approveVerification(verificationId, botConfig.adminUserId);
         actionTaken = 'Verification approved ✅';
+        
+        // Get user info to send notification
+        const { data: verification } = await supabaseAdmin
+          .from('verifications')
+          .select('user_id, user:users(*)')
+          .eq('id', verificationId)
+          .single();
+        
+        if (verification?.user?.telegram_id) {
+          try {
+            await bot.sendMessage(verification.user.telegram_id, 
+              '✅ Verification Approved!\n\n' +
+              'Congratulations! Your profile has been verified. ' +
+              'You now have a verification badge on your profile.');
+          } catch (error) {
+            console.log('Could not send approval message to user');
+          }
+        }
       } else {
         await VerificationService.rejectVerification(verificationId, botConfig.adminUserId, 'Photo quality insufficient');
         actionTaken = 'Verification rejected ❌';
+        
+        // Get user info to send notification  
+        const { data: verification } = await supabaseAdmin
+          .from('verifications')
+          .select('user_id, user:users(*)')
+          .eq('id', verificationId)
+          .single();
+        
+        if (verification?.user?.telegram_id) {
+          try {
+            await bot.sendMessage(verification.user.telegram_id, 
+              '❌ Verification Rejected\n\n' +
+              'Your verification was not approved. Please ensure you follow all guidelines and try again:\n\n' +
+              '• Clear, well-lit photo\n' +
+              '• Face clearly visible\n' +
+              '• No filters or editing\n' +
+              '• Look directly at camera');
+          } catch (error) {
+            console.log('Could not send rejection message to user');
+          }
+        }
       }
 
       await bot.sendMessage(chatId, 
@@ -432,6 +518,40 @@ export class AdminHandler {
     }
   }
 
+  // Helper methods for user actions
+  static async banUserInternal(userId, reason) {
+    try {
+      await supabaseAdmin
+        .from('users')
+        .update({
+          is_banned: true,
+          banned_at: new Date().toISOString(),
+          banned_reason: reason
+        })
+        .eq('telegram_id', userId);
+    } catch (error) {
+      console.error('Error banning user internally:', error);
+    }
+  }
+
+  static async suspendUserInternal(userId, days, reason) {
+    try {
+      const suspendUntil = new Date();
+      suspendUntil.setDate(suspendUntil.getDate() + days);
+      
+      await supabaseAdmin
+        .from('users')
+        .update({
+          is_suspended: true,
+          suspended_until: suspendUntil.toISOString(),
+          suspension_reason: reason
+        })
+        .eq('telegram_id', userId);
+    } catch (error) {
+      console.error('Error suspending user internally:', error);
+    }
+  }
+
   static async handleBanCommand(msg) {
     const args = msg.text.split(' ');
     if (args.length < 2) {
@@ -443,7 +563,7 @@ export class AdminHandler {
     const reason = args.slice(2).join(' ') || 'Banned by admin';
 
     try {
-      await ReportService.banUser(userId, botConfig.adminUserId, reason);
+      await this.banUserInternal(userId, reason);
       await bot.sendMessage(msg.chat.id, `✅ User ${userId} has been banned.`);
     } catch (error) {
       console.error('Error banning user:', error);
@@ -461,7 +581,15 @@ export class AdminHandler {
     const userId = parseInt(args[1]);
 
     try {
-      await ReportService.unbanUser(userId, botConfig.adminUserId);
+      await supabaseAdmin
+        .from('users')
+        .update({
+          is_banned: false,
+          banned_at: null,
+          banned_reason: null
+        })
+        .eq('telegram_id', userId);
+        
       await bot.sendMessage(msg.chat.id, `✅ User ${userId} has been unbanned.`);
     } catch (error) {
       console.error('Error unbanning user:', error);
@@ -481,7 +609,7 @@ export class AdminHandler {
     const reason = args.slice(3).join(' ') || 'Suspended by admin';
 
     try {
-      await ReportService.suspendUser(userId, botConfig.adminUserId, days, reason);
+      await this.suspendUserInternal(userId, days, reason);
       await bot.sendMessage(msg.chat.id, `✅ User ${userId} has been suspended for ${days} days.`);
     } catch (error) {
       console.error('Error suspending user:', error);
@@ -491,7 +619,6 @@ export class AdminHandler {
 
   static async handleTestUserMode(msg) {
     const chatId = msg.chat.id;
-    const adminId = msg.from.id;
 
     await bot.sendMessage(chatId, 
       '👤 Test User Mode\n\n' +
@@ -545,6 +672,167 @@ export class AdminHandler {
     } catch (error) {
       console.error('Error showing subscription management:', error);
       await bot.sendMessage(chatId, 'Error loading subscriptions.');
+    }
+  }
+
+  static async handleUserCommand(chatId, userIdStr) {
+    try {
+      const userId = parseInt(userIdStr);
+      const user = await UserService.getUserByTelegramId(userId);
+      
+      if (!user) {
+        await bot.sendMessage(chatId, `User ${userId} not found.`);
+        return;
+      }
+
+      const photos = await UserService.getUserPhotos(userId);
+      const subscription = await SubscriptionService.getUserSubscription(userId);
+
+      let userText = `👤 User Information\n\n`;
+      userText += `Name: ${user.first_name} ${user.last_name || ''}\n`;
+      userText += `Username: @${user.username || 'None'}\n`;
+      userText += `Telegram ID: ${user.telegram_id}\n`;
+      userText += `Age: ${user.age || 'Not set'}\n`;
+      userText += `Gender: ${user.gender || 'Not set'}\n`;
+      userText += `Status: ${user.is_active ? '✅ Active' : '❌ Inactive'}\n`;
+      userText += `Verified: ${user.is_verified ? '✅ Yes' : '❌ No'}\n`;
+      userText += `Premium: ${subscription ? `✅ ${subscription.plan_type}` : '❌ Free'}\n`;
+      userText += `Banned: ${user.is_banned ? '🚫 Yes' : '✅ No'}\n`;
+      userText += `Suspended: ${user.is_suspended ? '⏸️ Yes' : '✅ No'}\n`;
+      userText += `Photos: ${photos.length}/6\n`;
+      userText += `Joined: ${new Date(user.created_at).toLocaleDateString()}\n`;
+
+      await bot.sendMessage(chatId, userText, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🚫 Ban User', callback_data: `admin_ban_${userId}` },
+              { text: '⏸️ Suspend User', callback_data: `admin_suspend_${userId}` }
+            ],
+            [
+              { text: '💎 Grant Premium', callback_data: `admin_premium_${userId}` },
+              { text: '✅ Verify User', callback_data: `admin_verify_user_${userId}` }
+            ],
+            [{ text: '🔙 Back', callback_data: 'admin_menu' }]
+          ]
+        }
+      });
+    } catch (error) {
+      console.error('Error handling user command:', error);
+      await bot.sendMessage(chatId, 'Error loading user information.');
+    }
+  }
+
+  static async handleBroadcast(chatId, message) {
+    try {
+      await bot.sendMessage(chatId, 
+        `📢 Broadcast Message\n\n` +
+        `Message: "${message}"\n\n` +
+        `Are you sure you want to send this to all users?`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Confirm Broadcast', callback_data: `admin_broadcast_confirm_${Buffer.from(message).toString('base64')}` }],
+              [{ text: '❌ Cancel', callback_data: 'admin_menu' }]
+            ]
+          }
+        }
+      );
+    } catch (error) {
+      console.error('Error preparing broadcast:', error);
+      await bot.sendMessage(chatId, 'Error preparing broadcast.');
+    }
+  }
+
+  static async executeBroadcast(chatId, message) {
+    try {
+      const { data: users } = await supabaseAdmin
+        .from('users')
+        .select('telegram_id')
+        .eq('is_active', true)
+        .eq('is_banned', false);
+
+      if (!users || users.length === 0) {
+        await bot.sendMessage(chatId, 'No active users found.');
+        return;
+      }
+
+      let successCount = 0;
+      let failureCount = 0;
+
+      await bot.sendMessage(chatId, `📢 Starting broadcast to ${users.length} users...`);
+
+      for (const user of users) {
+        try {
+          await bot.sendMessage(user.telegram_id, `📢 ${message}`);
+          successCount++;
+          
+          // Add delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } catch (error) {
+          failureCount++;
+        }
+      }
+
+      await bot.sendMessage(chatId, 
+        `✅ Broadcast completed!\n\n` +
+        `✅ Successful: ${successCount}\n` +
+        `❌ Failed: ${failureCount}`
+      );
+    } catch (error) {
+      console.error('Error executing broadcast:', error);
+      await bot.sendMessage(chatId, 'Error executing broadcast.');
+    }
+  }
+
+  // Additional callback handlers
+  static async handleAdminCallback(chatId, userId, data) {
+    try {
+      if (data === 'admin_users') {
+        await bot.sendMessage(chatId, 
+          '👥 User Management\n\nUse commands:\n' +
+          '/user <user_id> - View user info\n' +
+          '/ban <user_id> [reason] - Ban user\n' +
+          '/unban <user_id> - Unban user\n' +
+          '/suspend <user_id> <days> [reason] - Suspend user',
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🔙 Back', callback_data: 'admin_menu' }]
+              ]
+            }
+          }
+        );
+      } else if (data === 'admin_analytics') {
+        await bot.sendMessage(chatId, 
+          '📈 Analytics coming soon!',
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🔙 Back', callback_data: 'admin_menu' }]
+              ]
+            }
+          }
+        );
+      } else if (data === 'admin_payments') {
+        await bot.sendMessage(chatId, 
+          '💳 Payment Management coming soon!',
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🔙 Back', callback_data: 'admin_menu' }]
+              ]
+            }
+          }
+        );
+      } else if (data.startsWith('admin_broadcast_confirm_')) {
+        const messageBase64 = data.replace('admin_broadcast_confirm_', '');
+        const message = Buffer.from(messageBase64, 'base64').toString('utf-8');
+        await this.executeBroadcast(chatId, message);
+      }
+    } catch (error) {
+      console.error('Error handling admin callback:', error);
+      await bot.sendMessage(chatId, 'Error processing admin action.');
     }
   }
 }

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../config/database.js';
 import sharp from 'sharp';
+import fetch from 'node-fetch';
 
 export class VerificationService {
   static async startFaceVerification(userId) {
@@ -21,33 +22,56 @@ export class VerificationService {
       console.error('Error starting face verification:', error);
       throw error;
     }
-    }
+  }
+
   static async submitVerificationPhoto(userId, photoData) {
     try {
-      // Process and optimize the image
-      const processedImage = await this.processVerificationImage(photoData);
+      // Get the file from Telegram
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${photoData.file_path || photoData.file_id}`;
+      
+      let imageBuffer;
+      try {
+        const response = await fetch(fileUrl);
+        imageBuffer = await response.buffer();
+      } catch (fetchError) {
+        console.error('Error fetching photo from Telegram:', fetchError);
+        // Fallback - just use the file_id as reference
+        imageBuffer = null;
+      }
 
-      // Upload to Supabase Storage
-      const fileName = `verification_${userId}_${Date.now()}.jpg`;
-      const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
-        .from('verification-photos')
-        .upload(fileName, processedImage, {
-          contentType: 'image/jpeg'
-        });
+      let processedImage = imageBuffer;
+      let fileName = `verification_${userId}_${Date.now()}.jpg`;
+      
+      if (imageBuffer) {
+        // Process and optimize the image
+        processedImage = await this.processVerificationImage(imageBuffer);
+        
+        // Upload to Supabase Storage
+        const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+          .from('verification-photos')
+          .upload(fileName, processedImage, {
+            contentType: 'image/jpeg'
+          });
 
-      if (uploadError) throw uploadError;
+        if (uploadError) {
+          console.error('Storage upload error:', uploadError);
+          // Continue without storage upload
+        }
+        
+        fileName = uploadData?.path || fileName;
+      }
 
-      // Update verification record
+      // Update or create verification record
       const { data, error } = await supabaseAdmin
         .from('verifications')
-        .update({
-          photo_url: uploadData.path,
+        .upsert({
+          user_id: userId,
+          verification_type: 'face',
+          photo_url: fileName,
+          file_id: photoData.file_id,
           status: 'submitted',
           submitted_at: new Date().toISOString()
         })
-        .eq('user_id', userId)
-        .eq('verification_type', 'face')
-        .eq('status', 'pending')
         .select()
         .single();
 
@@ -67,12 +91,81 @@ export class VerificationService {
         .toBuffer();
     } catch (error) {
       console.error('Error processing verification image:', error);
+      // Return original buffer if processing fails
+      return imageBuffer;
+    }
+  }
+
+  static async submitVerificationVideo(userId, videoData) {
+    try {
+      // Process and upload the video
+      const fileName = `verification_video_${userId}_${Date.now()}.mp4`;
+      
+      // Get the file URL from Telegram
+      const fileUrl = videoData.file_path ? 
+        `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${videoData.file_path}` :
+        null;
+
+      let uploadPath = fileName;
+
+      if (fileUrl) {
+        try {
+          const response = await fetch(fileUrl);
+          const videoBuffer = await response.buffer();
+          
+          // Upload to Supabase Storage
+          const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+            .from('verification-videos')
+            .upload(fileName, videoBuffer, {
+              contentType: 'video/mp4'
+            });
+          
+          if (uploadData?.path) {
+            uploadPath = uploadData.path;
+          }
+          
+          if (uploadError) {
+            console.error('Video upload error:', uploadError);
+          }
+        } catch (fetchError) {
+          console.error('Error fetching video from Telegram:', fetchError);
+        }
+      }
+
+      // Update or create verification record
+      const { data, error } = await supabaseAdmin
+        .from('verifications')
+        .upsert({
+          user_id: userId,
+          verification_type: 'face',
+          photo_url: uploadPath, // Using photo_url field for video path
+          file_id: videoData.file_id,
+          status: 'submitted',
+          submitted_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error submitting verification video:', error);
       throw error;
     }
   }
 
-  static async approveVerification(userId, adminId) {
+  static async approveVerification(verificationId, adminId) {
     try {
+      // Get the verification record first
+      const { data: verification, error: getError } = await supabaseAdmin
+        .from('verifications')
+        .select('user_id')
+        .eq('id', verificationId)
+        .single();
+
+      if (getError) throw getError;
+
+      // Update verification record
       const { data, error } = await supabaseAdmin
         .from('verifications')
         .update({
@@ -80,9 +173,7 @@ export class VerificationService {
           reviewed_by: adminId,
           reviewed_at: new Date().toISOString()
         })
-        .eq('user_id', userId)
-        .eq('verification_type', 'face')
-        .eq('status', 'submitted')
+        .eq('id', verificationId)
         .select()
         .single();
 
@@ -95,7 +186,7 @@ export class VerificationService {
           is_verified: true,
           verified_at: new Date().toISOString()
         })
-        .eq('telegram_id', userId);
+        .eq('telegram_id', verification.user_id);
 
       return data;
     } catch (error) {
@@ -104,7 +195,7 @@ export class VerificationService {
     }
   }
 
-  static async rejectVerification(userId, adminId, reason) {
+  static async rejectVerification(verificationId, adminId, reason) {
     try {
       const { data, error } = await supabaseAdmin
         .from('verifications')
@@ -114,9 +205,7 @@ export class VerificationService {
           reviewed_by: adminId,
           reviewed_at: new Date().toISOString()
         })
-        .eq('user_id', userId)
-        .eq('verification_type', 'face')
-        .eq('status', 'submitted')
+        .eq('id', verificationId)
         .select()
         .single();
 
@@ -237,71 +326,12 @@ export class VerificationService {
   static toRadians(degrees) {
     return degrees * (Math.PI / 180);
   }
-   /*  static async submitVerificationVideo(userId, videoData) {
-    try {
-      // Process and upload the video
-      const fileName = `verification_video_${userId}_${Date.now()}.mp4`;
-      
-      // Download video from Telegram
-      const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${videoData.file_path}`;
-      
-      // Upload to Supabase Storage
-      const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
-        .from('verification-videos')
-        .upload(fileName, videoData.file_id, {
-          contentType: 'video/mp4'
-        });
-      if (uploadError) throw uploadError;
-
-      // Update verification record
-      const { data, error } = await supabaseAdmin
-        .from('verifications')
-        .upsert({
-          user_id: userId,
-          verification_type: 'face',
-          status: 'submitted',
-          photo_url: uploadData.path, // Using photo_url field for video path
-          submitted_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error submitting verification video:', error);
-      throw error;
-    }
-  }
-} */
 
   static async saveVideoToStorage(telegram_id, fileId) {
     // Download video from Telegram and upload to Supabase Storage
     // Return public URL
-    // Implement this as needed
+    // This is a placeholder - implement actual video storage logic
     return `https://your-supabase-url/storage/v1/object/public/verification-videos/${telegram_id}_${fileId}.mp4`;
-  }
-
-  static async submitVerificationVideo(telegram_id, videoData) {
-    try {
-      // Save verification record in DB
-      const { data, error } = await supabaseAdmin
-      .from('verifications')
-        .upsert({
-        user_id: telegram_id,
-          verification_type: 'face',
-          status: 'submitted',
-        photo_url: videoData.file_path,
-        submitted_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error submitting verification video:', error);
-      throw error;
-    }
   }
 
   static async getUserVerificationStatus(userId) {

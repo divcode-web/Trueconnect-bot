@@ -385,7 +385,12 @@ export class UserService {
       };
     } catch (error) {
       console.error('Error fetching notification settings:', error);
-      return null;
+      return {
+        new_matches: true,
+        new_messages: true,
+        profile_views: true,
+        super_likes: true
+      };
     }
   }
 
@@ -423,7 +428,11 @@ export class UserService {
       };
     } catch (error) {
       console.error('Error fetching privacy settings:', error);
-      return null;
+      return {
+        profile_visibility: 'public',
+        location_privacy: 'approximate',
+        message_privacy: 'matches_only'
+      };
     }
   }
 
@@ -480,6 +489,127 @@ export class UserService {
     } catch (error) {
       console.error('Error setting primary photo:', error);
       return false;
+    }
+  }
+
+  // Missing methods that were being called
+  static async getLikesForUser(telegramId) {
+    return this.getUserLikes(telegramId);
+  }
+
+  static async getUserSubscription(telegramId) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', telegramId)
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      return data;
+    } catch (error) {
+      console.error('Error fetching user subscription:', error);
+      return null;
+    }
+  }
+
+  // Method to set age range preferences
+  static async setAgePreference(telegramId, minAge, maxAge) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_preferences')
+        .upsert({
+          user_id: telegramId,
+          min_age: minAge,
+          max_age: maxAge,
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error setting age preference:', error);
+      throw error;
+    }
+  }
+
+  // Method to set distance preference
+  static async setDistancePreference(telegramId, maxDistance) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_preferences')
+        .upsert({
+          user_id: telegramId,
+          max_distance: maxDistance,
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error setting distance preference:', error);
+      throw error;
+    }
+  }
+
+  // Method to set gender preference
+  static async setGenderPreference(telegramId, preferredGender) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_preferences')
+        .upsert({
+          user_id: telegramId,
+          preferred_gender: preferredGender,
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error setting gender preference:', error);
+      throw error;
+    }
+  }
+
+  // Method to update profile visibility
+  static async setProfileVisibility(telegramId, visibility) {
+    try {
+      const settings = await this.getUserPrivacySettings(telegramId);
+      settings.profile_visibility = visibility;
+      return await this.updatePrivacySettings(telegramId, settings);
+    } catch (error) {
+      console.error('Error setting profile visibility:', error);
+      throw error;
+    }
+  }
+
+  // Method to update location privacy
+  static async setLocationPrivacy(telegramId, privacy) {
+    try {
+      const settings = await this.getUserPrivacySettings(telegramId);
+      settings.location_privacy = privacy;
+      return await this.updatePrivacySettings(telegramId, settings);
+    } catch (error) {
+      console.error('Error setting location privacy:', error);
+      throw error;
+    }
+  }
+
+  // Method to update message privacy
+  static async setMessagePrivacy(telegramId, privacy) {
+    try {
+      const settings = await this.getUserPrivacySettings(telegramId);
+      settings.message_privacy = privacy;
+      return await this.updatePrivacySettings(telegramId, settings);
+    } catch (error) {
+      console.error('Error setting message privacy:', error);
+      throw error;
     }
   }
 }

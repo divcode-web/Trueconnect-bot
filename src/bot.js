@@ -44,16 +44,12 @@ async function initializeBot() {
   try {
     console.log('🚀 Starting Premium Dating Bot...');
     
-    // Test database connection
     const dbConnected = await testConnection();
     if (!dbConnected) {
       throw new Error('Database connection failed');
     }
 
-    // Setup webhook
     await setupWebhook();
-
-    // Setup scheduled tasks
     setupScheduledTasks();
 
     console.log('✅ Bot initialized successfully');
@@ -63,20 +59,19 @@ async function initializeBot() {
   }
 }
 
-// Scheduled tasks
 function setupScheduledTasks() {
-  // Archive old messages daily at 2 AM
   cron.schedule('0 2 * * *', async () => {
     console.log('🗄️ Running message archival...');
     try {
-      await MessageService.archiveOldMessages();
-      await MessageService.cleanupFreeUserMessages();
+      if (MessageService && MessageService.archiveOldMessages) {
+        await MessageService.archiveOldMessages();
+        await MessageService.cleanupFreeUserMessages();
+      }
     } catch (error) {
       console.error('Error in message archival:', error);
     }
   });
 
-  // Check expired subscriptions every hour
   cron.schedule('0 * * * *', async () => {
     console.log('💎 Checking expired subscriptions...');
     try {
@@ -86,7 +81,6 @@ function setupScheduledTasks() {
     }
   });
 
-  // Check suspended users daily at 1 AM
   cron.schedule('0 1 * * *', async () => {
     console.log('🔒 Checking suspended users...');
     try {
@@ -96,7 +90,6 @@ function setupScheduledTasks() {
     }
   });
 
-  // Clean daily likes cache
   cron.schedule('0 0 * * *', async () => {
     console.log('🧹 Cleaning daily likes cache...');
     BrowsingHandler.cleanupDailyLikes();
@@ -105,7 +98,6 @@ function setupScheduledTasks() {
   console.log('⏰ Scheduled tasks configured');
 }
 
-// Bot event handlers
 bot.on('message', async (msg) => {
   try {
     const chatId = msg.chat.id;
@@ -114,7 +106,6 @@ bot.on('message', async (msg) => {
 
     console.log(`📨 Message from ${msg.from.first_name} (${userId}): ${text}`);
 
-    // Check if user is banned or suspended
     const user = await UserService.getUserByTelegramId(userId);
     if (user?.is_banned) {
       await bot.sendMessage(chatId, '🚫 Your account has been banned. Contact support if you believe this is an error.');
@@ -125,13 +116,11 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // Handle admin commands
     if (text?.startsWith('/') && await AdminHandler.isAdmin(userId)) {
       await AdminHandler.handleAdminCommand(msg);
       return;
     }
 
-    // Handle location updates
     if (msg.location) {
       if (user && user.registration_step && user.registration_step !== 'completed') {
         await RegistrationHandler.handleLocation(msg, user);
@@ -143,7 +132,6 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // Handle commands
     if (text?.startsWith('/')) {
       switch (text.split(' ')[0]) {
         case '/start':
@@ -179,14 +167,12 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // Handle registration flow
     const currentUser = await UserService.getUserByTelegramId(userId);
     if (currentUser && currentUser.registration_step !== 'completed') {
       await RegistrationHandler.handleRegistration(msg);
       return;
     }
 
-    // Handle account deletion confirmation
     if (text === 'DELETE MY ACCOUNT') {
       const success = await UserService.deleteUserAccount(userId);
       if (success) {
@@ -203,25 +189,24 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // Handle profile editing text inputs
     if (currentUser?.editing_field) {
       await handleProfileEdit(msg, currentUser);
       return;
     }
 
-    // Handle photo uploads
     if (msg.photo) {
       if (currentUser?.registration_step === 'photos') {
         await RegistrationHandler.handlePhotos(msg, currentUser);
       } else if (currentUser?.uploading_photos) {
         await handlePhotoUpload(msg, currentUser);
+      } else if (currentUser?.uploading_verification) {
+        await handleVerificationPhotoUpload(msg, currentUser);
       } else {
         await bot.sendMessage(chatId, 'Photo received! Use /profile to manage your photos.');
       }
       return;
     }
 
-    // Handle video uploads for verification
     if (msg.video) {
       if (currentUser?.uploading_verification) {
         await handleVerificationVideo(msg, currentUser);
@@ -231,7 +216,6 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // Default response
     await bot.sendMessage(chatId, 
       'Hi! Use the menu below to navigate:',
       keyboards.mainMenu
@@ -243,7 +227,6 @@ bot.on('message', async (msg) => {
   }
 });
 
-// Handle callback queries (inline keyboard buttons)
 bot.on('callback_query', async (query) => {
   try {
     const chatId = query.message.chat.id;
@@ -253,17 +236,15 @@ bot.on('callback_query', async (query) => {
 
     console.log(`📘 Callback from ${query.from.first_name} (${userId}): ${data}`);
 
-    // Get user data
     const user = await UserService.getUserByTelegramId(userId);
     if (!user) {
       await bot.answerCallbackQuery(query.id, { text: 'User not found. Please start with /start' });
       return;
     }
 
-    // Answer the callback query to remove loading state
     await bot.answerCallbackQuery(query.id);
 
-    // Main menu navigation
+    // Route all callbacks properly
     if (data === 'main_menu') {
       await bot.editMessageText('What would you like to do?', {
         chat_id: chatId,
@@ -273,13 +254,11 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Profile section
     if (data === 'profile') {
       await handleProfile(chatId, userId);
       return;
     }
 
-    // Browsing section
     if (data === 'browse') {
       await BrowsingHandler.startBrowsing(chatId, userId);
       return;
@@ -310,7 +289,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Handle browsing-related callbacks
     if (data.startsWith('browse_photos_')) {
       const targetUserId = parseInt(data.split('_')[2]);
       await BrowsingHandler.showUserPhotos(chatId, userId, targetUserId);
@@ -323,25 +301,21 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Matches section
     if (data === 'matches') {
       await handleMatches(chatId, userId);
       return;
     }
 
-    // Premium section
     if (data === 'premium') {
       await handlePremium(chatId);
       return;
     }
 
-    // Settings section
     if (data === 'settings') {
       await handleSettings(chatId, userId);
       return;
     }
 
-    // Profile editing
     if (data === 'edit_profile') {
       await handleEditProfileMenu(chatId, userId);
       return;
@@ -373,7 +347,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Registration callbacks
     if (data.startsWith('gender_')) {
       await RegistrationHandler.handleGenderCallback(query);
       return;
@@ -389,14 +362,34 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Settings callbacks
+    // Settings callbacks - FIXED
     if (data.startsWith('settings_')) {
       const settingType = data.split('_')[1];
       await handleSettingsCallback(chatId, userId, settingType);
       return;
     }
 
-    // Location update
+    // Preference callbacks - FIXED
+    if (data.startsWith('pref_')) {
+      const prefType = data.split('_')[1];
+      await handlePreferenceCallback(chatId, userId, prefType);
+      return;
+    }
+
+    // Notification callbacks - FIXED
+    if (data.startsWith('notif_')) {
+      const notifType = data.split('_')[1];
+      await handleNotificationCallback(chatId, userId, notifType);
+      return;
+    }
+
+    // Privacy callbacks - FIXED
+    if (data.startsWith('privacy_')) {
+      const privacyType = data.split('_')[1];
+      await handlePrivacyCallback(chatId, userId, privacyType);
+      return;
+    }
+
     if (data === 'update_location') {
       await BrowsingHandler.requestLocationUpdate(chatId);
       return;
@@ -418,7 +411,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Report user
     if (data.startsWith('report_user_')) {
       const targetUserId = parseInt(data.split('_')[2]);
       await handleReportUser(chatId, userId, targetUserId);
@@ -431,14 +423,12 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Chat functionality
     if (data.startsWith('chat_')) {
       const targetUserId = parseInt(data.split('_')[1]);
       await handleStartChat(chatId, userId, targetUserId);
       return;
     }
 
-    // Premium purchases
     if (data.startsWith('buy_')) {
       const plan = data.split('_')[1];
       await handlePurchasePlan(chatId, userId, plan);
@@ -451,27 +441,24 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Profile field editing
+    // Profile field editing - FIXED
     if (data.startsWith('edit_field_')) {
       const field = data.split('_')[2];
       await handleStartFieldEdit(chatId, userId, field);
       return;
     }
 
-    // Account deletion
     if (data.startsWith('confirm_delete_')) {
       const confirmUserId = parseInt(data.split('_')[2]);
       await handleConfirmDeleteAccount(chatId, userId, confirmUserId);
       return;
     }
 
-    // Admin section
     if (data.startsWith('admin_') && await AdminHandler.isAdmin(userId)) {
       await handleAdminCallback(chatId, userId, data);
       return;
     }
 
-    // Stars payment confirmation
     if (data.startsWith('confirm_stars_')) {
       const parts = data.split('_');
       const plan = parts[2];
@@ -480,7 +467,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Default fallback
     console.log(`Unhandled callback data: ${data}`);
     await bot.answerCallbackQuery(query.id, { text: 'Feature coming soon!' });
 
@@ -677,18 +663,186 @@ async function handleVerification(chatId, userId) {
 async function handleSettings(chatId, userId) {
   await bot.sendMessage(chatId, 
     '⚙️ Settings\n\nChoose what you want to configure:',
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🎯 Matching Preferences', callback_data: 'settings_preferences' }],
-          [{ text: '🔔 Notifications', callback_data: 'settings_notifications' }],
-          [{ text: '🔒 Privacy', callback_data: 'settings_privacy' }],
-          [{ text: '📍 Location', callback_data: 'update_location' }],
-          [{ text: '🔙 Back', callback_data: 'main_menu' }]
-        ]
-      }
-    }
+    keyboards.settingsMenu
   );
+}
+// Add these callback handlers to your bot.js file inside the callback_query handler
+
+// Age preference callbacks
+if (data.startsWith('set_age_')) {
+  const ageRange = data.replace('set_age_', '');
+  const [minAge, maxAge] = ageRange.split('_').map(Number);
+  try {
+    await UserService.setAgePreference(userId, minAge, maxAge);
+    await bot.sendMessage(chatId, 
+      `Age preference updated to ${minAge}-${maxAge} years!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Preferences', callback_data: 'settings_preferences' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting age preference:', error);
+    await bot.sendMessage(chatId, 'Error updating preference.');
+  }
+  return;
+}
+
+// Distance preference callbacks
+if (data.startsWith('set_distance_')) {
+  const distance = parseInt(data.replace('set_distance_', ''));
+  try {
+    await UserService.setDistancePreference(userId, distance);
+    await bot.sendMessage(chatId, 
+      `Distance preference updated to ${distance}km!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Preferences', callback_data: 'settings_preferences' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting distance preference:', error);
+    await bot.sendMessage(chatId, 'Error updating preference.');
+  }
+  return;
+}
+
+// Gender preference callbacks
+if (data.startsWith('set_gender_')) {
+  const gender = data.replace('set_gender_', '');
+  const genderMap = {
+    'male': 'male',
+    'female': 'female', 
+    'both': 'both'
+  };
+  
+  try {
+    await UserService.setGenderPreference(userId, genderMap[gender]);
+    await bot.sendMessage(chatId, 
+      `Gender preference updated to ${gender}!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Preferences', callback_data: 'settings_preferences' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting gender preference:', error);
+    await bot.sendMessage(chatId, 'Error updating preference.');
+  }
+  return;
+}
+
+// Privacy visibility callbacks
+if (data.startsWith('set_visibility_')) {
+  const visibility = data.replace('set_visibility_', '');
+  try {
+    await UserService.setProfileVisibility(userId, visibility);
+    await bot.sendMessage(chatId, 
+      `Profile visibility updated to ${visibility}!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Privacy Settings', callback_data: 'settings_privacy' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting visibility:', error);
+    await bot.sendMessage(chatId, 'Error updating setting.');
+  }
+  return;
+}
+
+// Location privacy callbacks
+if (data.startsWith('set_location_')) {
+  const locationPrivacy = data.replace('set_location_', '');
+  try {
+    await UserService.setLocationPrivacy(userId, locationPrivacy);
+    await bot.sendMessage(chatId, 
+      `Location privacy updated to ${locationPrivacy}!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Privacy Settings', callback_data: 'settings_privacy' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting location privacy:', error);
+    await bot.sendMessage(chatId, 'Error updating setting.');
+  }
+  return;
+}
+
+// Message privacy callbacks
+if (data.startsWith('set_messages_')) {
+  const messagePrivacy = data.replace('set_messages_', '');
+  try {
+    await UserService.setMessagePrivacy(userId, messagePrivacy);
+    await bot.sendMessage(chatId, 
+      `Message privacy updated to ${messagePrivacy}!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Privacy Settings', callback_data: 'settings_privacy' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting message privacy:', error);
+    await bot.sendMessage(chatId, 'Error updating setting.');
+  }
+  return;
+}
+
+// Admin callbacks
+if (data.startsWith('admin_ban_')) {
+  const targetUserId = parseInt(data.replace('admin_ban_', ''));
+  await AdminHandler.banUserInternal(targetUserId, 'Banned by admin');
+  await bot.sendMessage(chatId, `User ${targetUserId} has been banned.`);
+  return;
+}
+
+if (data.startsWith('admin_suspend_')) {
+  const targetUserId = parseInt(data.replace('admin_suspend_', ''));
+  await AdminHandler.suspendUserInternal(targetUserId, 7, 'Suspended by admin');
+  await bot.sendMessage(chatId, `User ${targetUserId} has been suspended for 7 days.`);
+  return;
+}
+
+if (data.startsWith('admin_verify_user_')) {
+  const targetUserId = parseInt(data.replace('admin_verify_user_', ''));
+  try {
+    await supabaseAdmin
+      .from('users')
+      .update({
+        is_verified: true,
+        verified_at: new Date().toISOString()
+      })
+      .eq('telegram_id', targetUserId);
+    await bot.sendMessage(chatId, `User ${targetUserId} has been verified.`);
+  } catch (error) {
+    await bot.sendMessage(chatId, 'Error verifying user.');
+  }
+  return;
+}
+
+// Handle other admin callbacks
+if (data.startsWith('admin_') && await AdminHandler.isAdmin(userId)) {
+  await AdminHandler.handleAdminCallback(chatId, userId, data);
+  return;
 }
 
 // Profile editing handlers
@@ -749,7 +903,6 @@ async function handleWhoLikesMe(chatId, userId) {
       return;
     }
 
-    // Check if user is premium
     const isPremium = await SubscriptionService.isUserPremium(userId);
     
     if (!isPremium) {
@@ -804,6 +957,7 @@ async function handleDeleteAccountConfirmation(chatId, userId) {
 async function handleStartVerification(chatId, userId) {
   try {
     await VerificationService.startFaceVerification(userId);
+    await UserService.updateUser(userId, { uploading_verification: true });
     await bot.sendMessage(chatId, 
       '📸 Face Verification\n\n' +
       'Please upload a clear photo of yourself following these guidelines:\n\n' +
@@ -1038,6 +1192,28 @@ async function handlePhotoUpload(msg, user) {
   );
 }
 
+async function handleVerificationPhotoUpload(msg, user) {
+  try {
+    if (!msg.photo || msg.photo.length === 0) return;
+    
+    const photo = msg.photo[msg.photo.length - 1];
+    await VerificationService.submitVerificationPhoto(user.telegram_id, photo);
+    await UserService.updateUser(user.telegram_id, { uploading_verification: false });
+    
+    await bot.sendMessage(msg.chat.id, 
+      '✅ Verification Photo Submitted!\n\n' +
+      'Your verification photo has been submitted for review. ' +
+      'Our team will review it within 24 hours and notify you of the result.',
+      keyboards.profileActions
+    );
+  } catch (error) {
+    console.error('Error submitting verification photo:', error);
+    await bot.sendMessage(msg.chat.id, 
+      '❌ Error uploading verification photo. Please try again.'
+    );
+  }
+}
+
 async function handleVerificationVideo(msg, user) {
   try {
     await VerificationService.submitVerificationVideo(user.telegram_id, msg.video);
@@ -1088,7 +1264,7 @@ async function handleMatchingPreferences(chatId, userId) {
       reply_markup: {
         inline_keyboard: [
           [{ text: '📊 Age Range', callback_data: 'pref_age' }],
-          [{ text: '📍 Distance', callback_data: 'pref_distance' }],
+          [{ text: '📏 Distance', callback_data: 'pref_distance' }],
           [{ text: '⚧️ Gender', callback_data: 'pref_gender' }],
           [{ text: '🔙 Back', callback_data: 'settings' }]
         ]
@@ -1101,28 +1277,44 @@ async function handleMatchingPreferences(chatId, userId) {
 }
 
 async function handleNotificationSettings(chatId, userId) {
-  await bot.sendMessage(chatId, 
-    '🔔 Notification Settings\n\n' +
-    'Configure your notification preferences:',
-    {
+  try {
+    const settings = await UserService.getUserNotificationSettings(userId);
+    
+    const settingsText = `🔔 Notification Settings\n\n` +
+      `New Matches: ${settings.new_matches ? '✅' : '❌'}\n` +
+      `Messages: ${settings.new_messages ? '✅' : '❌'}\n` +
+      `Profile Views: ${settings.profile_views ? '✅' : '❌'}\n` +
+      `Super Likes: ${settings.super_likes ? '✅' : '❌'}\n\n` +
+      `Toggle notifications:`;
+    
+    await bot.sendMessage(chatId, settingsText, {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '💕 New Matches', callback_data: 'notif_matches' }],
-          [{ text: '💬 Messages', callback_data: 'notif_messages' }],
-          [{ text: '👀 Profile Views', callback_data: 'notif_views' }],
-          [{ text: '⭐ Super Likes', callback_data: 'notif_superlikes' }],
+          [{ text: `💕 New Matches ${settings.new_matches ? '✅' : '❌'}`, callback_data: 'notif_matches' }],
+          [{ text: `💬 Messages ${settings.new_messages ? '✅' : '❌'}`, callback_data: 'notif_messages' }],
+          [{ text: `👀 Profile Views ${settings.profile_views ? '✅' : '❌'}`, callback_data: 'notif_views' }],
+          [{ text: `⭐ Super Likes ${settings.super_likes ? '✅' : '❌'}`, callback_data: 'notif_superlikes' }],
           [{ text: '🔙 Back', callback_data: 'settings' }]
         ]
       }
-    }
-  );
+    });
+  } catch (error) {
+    console.error('Error showing notification settings:', error);
+    await bot.sendMessage(chatId, 'Error loading notification settings.');
+  }
 }
 
 async function handlePrivacySettings(chatId, userId) {
-  await bot.sendMessage(chatId, 
-    '🔒 Privacy Settings\n\n' +
-    'Manage your privacy preferences:',
-    {
+  try {
+    const settings = await UserService.getUserPrivacySettings(userId);
+    
+    const settingsText = `🔒 Privacy Settings\n\n` +
+      `Profile Visibility: ${settings.profile_visibility}\n` +
+      `Location Privacy: ${settings.location_privacy}\n` +
+      `Message Privacy: ${settings.message_privacy}\n\n` +
+      `Update privacy settings:`;
+    
+    await bot.sendMessage(chatId, settingsText, {
       reply_markup: {
         inline_keyboard: [
           [{ text: '👁️ Profile Visibility', callback_data: 'privacy_visibility' }],
@@ -1131,13 +1323,155 @@ async function handlePrivacySettings(chatId, userId) {
           [{ text: '🔙 Back', callback_data: 'settings' }]
         ]
       }
+    });
+  } catch (error) {
+    console.error('Error showing privacy settings:', error);
+    await bot.sendMessage(chatId, 'Error loading privacy settings.');
+  }
+}
+
+// New callback handlers
+async function handlePreferenceCallback(chatId, userId, prefType) {
+  switch (prefType) {
+    case 'age':
+      await bot.sendMessage(chatId, 
+        '📊 Age Range Preference\n\nEnter your preferred age range (e.g., "18-35"):',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '18-25', callback_data: 'set_age_18_25' }],
+              [{ text: '25-35', callback_data: 'set_age_25_35' }],
+              [{ text: '35-50', callback_data: 'set_age_35_50' }],
+              [{ text: '🔙 Back', callback_data: 'settings_preferences' }]
+            ]
+          }
+        }
+      );
+      break;
+    case 'distance':
+      await bot.sendMessage(chatId,
+        '📏 Distance Preference\n\nChoose your maximum distance:',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '10km', callback_data: 'set_distance_10' }],
+              [{ text: '25km', callback_data: 'set_distance_25' }],
+              [{ text: '50km', callback_data: 'set_distance_50' }],
+              [{ text: '100km', callback_data: 'set_distance_100' }],
+              [{ text: '🔙 Back', callback_data: 'settings_preferences' }]
+            ]
+          }
+        }
+      );
+      break;
+    case 'gender':
+      await bot.sendMessage(chatId,
+        '⚧️ Gender Preference\n\nChoose who you want to see:',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: 'Men', callback_data: 'set_gender_male' }],
+              [{ text: 'Women', callback_data: 'set_gender_female' }],
+              [{ text: 'Both', callback_data: 'set_gender_both' }],
+              [{ text: '🔙 Back', callback_data: 'settings_preferences' }]
+            ]
+          }
+        }
+      );
+      break;
+  }
+}
+
+async function handleNotificationCallback(chatId, userId, notifType) {
+  try {
+    const settings = await UserService.getUserNotificationSettings(userId);
+    const newSettings = { ...settings };
+    
+    switch (notifType) {
+      case 'matches':
+        newSettings.new_matches = !settings.new_matches;
+        break;
+      case 'messages':
+        newSettings.new_messages = !settings.new_messages;
+        break;
+      case 'views':
+        newSettings.profile_views = !settings.profile_views;
+        break;
+      case 'superlikes':
+        newSettings.super_likes = !settings.super_likes;
+        break;
     }
-  );
+    
+    await UserService.updateNotificationSettings(userId, newSettings);
+    
+    await bot.sendMessage(chatId, 
+      `✅ Notification setting updated!\n\n${notifType.charAt(0).toUpperCase() + notifType.slice(1)} notifications are now ${newSettings[notifType.replace('superlikes', 'super_likes')] ? 'enabled' : 'disabled'}.`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Notifications', callback_data: 'settings_notifications' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error updating notification settings:', error);
+    await bot.sendMessage(chatId, 'Error updating settings.');
+  }
+}
+
+async function handlePrivacyCallback(chatId, userId, privacyType) {
+  switch (privacyType) {
+    case 'visibility':
+      await bot.sendMessage(chatId,
+        '👁️ Profile Visibility\n\nWho can see your profile?',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🌍 Everyone', callback_data: 'set_visibility_public' }],
+              [{ text: '👥 Matches Only', callback_data: 'set_visibility_matches' }],
+              [{ text: '🔒 Private', callback_data: 'set_visibility_private' }],
+              [{ text: '🔙 Back', callback_data: 'settings_privacy' }]
+            ]
+          }
+        }
+      );
+      break;
+    case 'location':
+      await bot.sendMessage(chatId,
+        '📍 Location Privacy\n\nHow precise should your location be?',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📍 Exact', callback_data: 'set_location_exact' }],
+              [{ text: '🌆 Approximate', callback_data: 'set_location_approximate' }],
+              [{ text: '🌍 City Only', callback_data: 'set_location_city' }],
+              [{ text: '🔙 Back', callback_data: 'settings_privacy' }]
+            ]
+          }
+        }
+      );
+      break;
+    case 'messages':
+      await bot.sendMessage(chatId,
+        '💬 Message Privacy\n\nWho can message you?',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '👥 Matches Only', callback_data: 'set_messages_matches' }],
+              [{ text: '💎 Premium Users', callback_data: 'set_messages_premium' }],
+              [{ text: '🌍 Everyone', callback_data: 'set_messages_everyone' }],
+              [{ text: '🔙 Back', callback_data: 'settings_privacy' }]
+            ]
+          }
+        }
+      );
+      break;
+  }
 }
 
 async function processStarPayment(chatId, userId, plan, amount) {
   try {
-    // Create Telegram Stars invoice
     const planNames = {
       silver: 'Silver Premium Plan',
       gold: 'Gold Premium Plan', 
@@ -1148,8 +1482,8 @@ async function processStarPayment(chatId, userId, plan, amount) {
       title: planNames[plan] || 'Premium Plan',
       description: `Upgrade to ${plan} plan with premium features`,
       payload: `premium_${plan}_${userId}`,
-      provider_token: '', // Empty for Telegram Stars
-      currency: 'XTR', // Telegram Stars currency
+      provider_token: '',
+      currency: 'XTR',
       prices: [{ label: 'Premium Plan', amount: parseInt(amount) }]
     };
 
@@ -1207,7 +1541,11 @@ async function handleAdminCallback(chatId, userId, data) {
       }
       break;
     case 'close':
-      await bot.deleteMessage(chatId, query.message.message_id);
+      try {
+        await bot.deleteMessage(chatId, messageId);
+      } catch (error) {
+        console.log('Could not delete message');
+      }
       break;
     default:
       if (data.startsWith('review_report_')) {
