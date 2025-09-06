@@ -43,7 +43,7 @@
     "uuid": "^9.0.1",
     "moment": "^2.29.4",
     "lodash": "^4.17.21",
-    "rate-limiter-flexible": "^3.0.8"
+    "rate-limiter-flexible": "^2.4.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.1",
