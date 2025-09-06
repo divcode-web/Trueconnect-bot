@@ -291,7 +291,13 @@ export class BrowsingHandler {
 
   static async updateLocation(chatId, userId) {
     await bot.sendMessage(chatId, 
-      'Please share your current location:',
+      '📍 Update Location\n\n' +
+      'To find matches near you, please share your current location.\n\n' +
+      'Your location is used to:\n' +
+      '• Find matches within your preferred distance\n' +
+      '• Show accurate distance to potential matches\n' +
+      '• Improve matching algorithm\n\n' +
+      'Click the button below to share your location:',
       {
         reply_markup: {
           keyboard: [
@@ -304,7 +310,61 @@ export class BrowsingHandler {
     );
   }
 
-  // Browse matches
+  static async handleLocationUpdate(msg) {
+    const userId = msg.from.id;
+    const chatId = msg.chat.id;
+    
+    if (!msg.location) {
+      await bot.sendMessage(chatId, 
+        'Please share your location using the location button.',
+        {
+          reply_markup: {
+            keyboard: [
+              [{ text: '📍 Share Location', request_location: true }]
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: true
+          }
+        }
+      );
+      return;
+    }
+
+    try {
+      const lat = msg.location.latitude;
+      const lon = msg.location.longitude;
+      
+      // Update user location
+      await UserService.updateUser(userId, {
+        latitude: lat,
+        longitude: lon,
+        location_updated_at: new Date().toISOString()
+      });
+      
+      // Record location verification
+      await VerificationService.recordLocationVerification(userId, lat, lon, msg.location.horizontal_accuracy);
+      
+      await bot.sendMessage(chatId, 
+        '✅ Location Updated!\n\n' +
+        'Your location has been updated successfully. You can now find matches near you!',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💕 Start Browsing', callback_data: 'browse' }],
+              [{ text: '🔙 Back to Settings', callback_data: 'settings' }]
+            ]
+          }
+        }
+      );
+    } catch (error) {
+      console.error('Error updating location:', error);
+      await bot.sendMessage(chatId, 
+        '❌ Error updating location. Please try again.',
+        keyboards.mainMenu
+      );
+    }
+  }
+
   static async handleBrowseMatches(msg, user) {
     const matches = await BrowsingService.browseMatches(user.telegram_id);
     if (!matches || matches.length === 0) {

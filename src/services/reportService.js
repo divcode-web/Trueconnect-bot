@@ -12,6 +12,16 @@ export class ReportService {
 
   static async createReport(reporterId, reportedId, reportType, description, evidence = null) {
     try {
+      // Validate input parameters
+      if (!reporterId || !reportedId || !reportType || !description) {
+        throw new Error('Missing required report parameters');
+      }
+
+      // Ensure reportType is valid
+      if (!Object.keys(this.reportTypes).includes(reportType)) {
+        throw new Error('Invalid report type');
+      }
+
       const { data, error } = await supabaseAdmin
         .from('reports')
         .insert({

@@ -257,11 +257,155 @@ export class UserService {
         .eq('telegram_id', telegramId)
         .select()
         .single();
+        
       if (error) throw error;
       return data;
     } catch (error) {
       console.error('Error updating user field:', error);
       throw error;
+    }
+  }
+
+  static async getUserLikes(telegramId) {
+    try {
+      const { data, error } = await supabaseAdmin
+      if (error) throw error;
+      return data?.map(swipe => swipe.swiper) || [];
+    } catch (error) {
+      console.error('Error fetching user likes:', error);
+      return [];
+    }
+  }
+
+  static async updateUserPreferences(telegramId, preferences) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_preferences')
+        .upsert({
+          user_id: telegramId,
+          ...preferences,
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating user preferences:', error);
+      throw error;
+    }
+  }
+
+  static async getUserNotificationSettings(telegramId) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_notification_settings')
+        .select('*')
+        .eq('user_id', telegramId)
+        .single();
+      if (error && error.code !== 'PGRST116') throw error;
+      return data || {
+        new_matches: true,
+        new_messages: true,
+        profile_views: true,
+        super_likes: true
+      };
+    } catch (error) {
+      console.error('Error fetching notification settings:', error);
+      return null;
+    }
+  }
+
+  static async updateNotificationSettings(telegramId, settings) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_notification_settings')
+        .upsert({
+          user_id: telegramId,
+          ...settings,
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating notification settings:', error);
+      throw error;
+    }
+  }
+
+  static async getUserPrivacySettings(telegramId) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_privacy_settings')
+        .select('*')
+        .eq('user_id', telegramId)
+        .single();
+      if (error && error.code !== 'PGRST116') throw error;
+      return data || {
+        profile_visibility: 'public',
+        location_privacy: 'approximate',
+        message_privacy: 'matches_only'
+      };
+    } catch (error) {
+      console.error('Error fetching privacy settings:', error);
+      return null;
+    }
+  }
+
+  static async updatePrivacySettings(telegramId, settings) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('user_privacy_settings')
+        .upsert({
+          user_id: telegramId,
+          ...settings,
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating privacy settings:', error);
+      throw error;
+    }
+  }
+
+  static async deleteUserPhoto(telegramId, photoId) {
+    try {
+      const { error } = await supabaseAdmin
+        .from('user_photos')
+        .delete()
+        .eq('user_id', telegramId)
+        .eq('id', photoId);
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Error deleting user photo:', error);
+      return false;
+    }
+  }
+
+  static async setPrimaryPhoto(telegramId, photoId) {
+    try {
+      // First, set all photos as non-primary
+      await supabaseAdmin
+        .from('user_photos')
+        .update({ is_primary: false })
+        .eq('user_id', telegramId);
+      // Then set the selected photo as primary
+      const { error } = await supabaseAdmin
+        .from('user_photos')
+        .update({ is_primary: true })
+        .eq('user_id', telegramId)
+        .eq('id', photoId);
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Error setting primary photo:', error);
+      return false;
     }
   }
 }

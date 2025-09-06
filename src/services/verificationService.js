@@ -282,15 +282,43 @@ export class VerificationService {
   }
 
   static async submitVerificationVideo(telegram_id, videoData) {
-    // Save verification record in DB
-    return await supabaseAdmin
+    try {
+      // Save verification record in DB
+      const { data, error } = await supabaseAdmin
       .from('verifications')
-      .insert({
+        .upsert({
         user_id: telegram_id,
-        verification_type: 'video',
-        status: 'pending',
+          verification_type: 'face',
+          status: 'submitted',
         photo_url: videoData.file_path,
         submitted_at: new Date().toISOString()
-      });
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error submitting verification video:', error);
+      throw error;
+    }
+  }
+
+  static async getUserVerificationStatus(userId) {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('verifications')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('verification_type', 'face')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+      if (error && error.code !== 'PGRST116') throw error;
+      return data;
+    } catch (error) {
+      console.error('Error fetching verification status:', error);
+      return null;
+    }
   }
 }

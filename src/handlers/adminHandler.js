@@ -11,12 +11,13 @@ export class AdminHandler {
   }
 
   static async handleAdminCommand(msg) {
-    if (!await this.isAdmin(msg.from.id)) {
+    const isAdmin = await this.isAdmin(msg.from.id);
+    if (!isAdmin) {
       await bot.sendMessage(msg.chat.id, '❌ Access denied. Admin only.');
       return;
     }
 
-    const command = msg.text.split(' ')[0];
+    const command = msg.text?.split(' ')[0] || '';
     
     switch (command) {
       case '/admin':
@@ -44,7 +45,17 @@ export class AdminHandler {
         await this.handleTestUserMode(msg);
         break;
       default:
-        await bot.sendMessage(msg.chat.id, 'Unknown admin command.');
+        await bot.sendMessage(msg.chat.id, 
+          'Unknown admin command. Available commands:\n' +
+          '/admin - Admin dashboard\n' +
+          '/stats - Platform statistics\n' +
+          '/reports - Pending reports\n' +
+          '/verifications - Pending verifications\n' +
+          '/ban <user_id> [reason] - Ban user\n' +
+          '/unban <user_id> - Unban user\n' +
+          '/suspend <user_id> <days> [reason] - Suspend user\n' +
+          '/test_user - Test user mode'
+        );
     }
   }
 
