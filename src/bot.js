@@ -466,6 +466,184 @@ bot.on('callback_query', async (query) => {
       await processStarPayment(chatId, userId, plan, amount);
       return;
     }
+    // Add these callback handlers to your bot.js file inside the callback_query handler
+
+// Age preference callbacks
+if (data.startsWith('set_age_')) {
+  const ageRange = data.replace('set_age_', '');
+  const [minAge, maxAge] = ageRange.split('_').map(Number);
+  try {
+    await UserService.setAgePreference(userId, minAge, maxAge);
+    await bot.sendMessage(chatId, 
+      `Age preference updated to ${minAge}-${maxAge} years!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Preferences', callback_data: 'settings_preferences' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting age preference:', error);
+    await bot.sendMessage(chatId, 'Error updating preference.');
+  }
+  return;
+}
+
+// Distance preference callbacks
+if (data.startsWith('set_distance_')) {
+  const distance = parseInt(data.replace('set_distance_', ''));
+  try {
+    await UserService.setDistancePreference(userId, distance);
+    await bot.sendMessage(chatId, 
+      `Distance preference updated to ${distance}km!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Preferences', callback_data: 'settings_preferences' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting distance preference:', error);
+    await bot.sendMessage(chatId, 'Error updating preference.');
+  }
+  return;
+}
+
+// Gender preference callbacks
+if (data.startsWith('set_gender_')) {
+  const gender = data.replace('set_gender_', '');
+  const genderMap = {
+    'male': 'male',
+    'female': 'female', 
+    'both': 'both'
+  };
+  
+  try {
+    await UserService.setGenderPreference(userId, genderMap[gender]);
+    await bot.sendMessage(chatId, 
+      `Gender preference updated to ${gender}!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Preferences', callback_data: 'settings_preferences' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting gender preference:', error);
+    await bot.sendMessage(chatId, 'Error updating preference.');
+  }
+  return;
+}
+
+// Privacy visibility callbacks
+if (data.startsWith('set_visibility_')) {
+  const visibility = data.replace('set_visibility_', '');
+  try {
+    await UserService.setProfileVisibility(userId, visibility);
+    await bot.sendMessage(chatId, 
+      `Profile visibility updated to ${visibility}!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Privacy Settings', callback_data: 'settings_privacy' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting visibility:', error);
+    await bot.sendMessage(chatId, 'Error updating setting.');
+  }
+  return;
+}
+
+// Location privacy callbacks
+if (data.startsWith('set_location_')) {
+  const locationPrivacy = data.replace('set_location_', '');
+  try {
+    await UserService.setLocationPrivacy(userId, locationPrivacy);
+    await bot.sendMessage(chatId, 
+      `Location privacy updated to ${locationPrivacy}!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Privacy Settings', callback_data: 'settings_privacy' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting location privacy:', error);
+    await bot.sendMessage(chatId, 'Error updating setting.');
+  }
+  return;
+}
+
+// Message privacy callbacks
+if (data.startsWith('set_messages_')) {
+  const messagePrivacy = data.replace('set_messages_', '');
+  try {
+    await UserService.setMessagePrivacy(userId, messagePrivacy);
+    await bot.sendMessage(chatId, 
+      `Message privacy updated to ${messagePrivacy}!`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Back to Privacy Settings', callback_data: 'settings_privacy' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error setting message privacy:', error);
+    await bot.sendMessage(chatId, 'Error updating setting.');
+  }
+  return;
+}
+
+// Admin callbacks
+if (data.startsWith('admin_ban_')) {
+  const targetUserId = parseInt(data.replace('admin_ban_', ''));
+  await AdminHandler.banUserInternal(targetUserId, 'Banned by admin');
+  await bot.sendMessage(chatId, `User ${targetUserId} has been banned.`);
+  return;
+}
+
+if (data.startsWith('admin_suspend_')) {
+  const targetUserId = parseInt(data.replace('admin_suspend_', ''));
+  await AdminHandler.suspendUserInternal(targetUserId, 7, 'Suspended by admin');
+  await bot.sendMessage(chatId, `User ${targetUserId} has been suspended for 7 days.`);
+  return;
+}
+
+if (data.startsWith('admin_verify_user_')) {
+  const targetUserId = parseInt(data.replace('admin_verify_user_', ''));
+  try {
+    await supabaseAdmin
+      .from('users')
+      .update({
+        is_verified: true,
+        verified_at: new Date().toISOString()
+      })
+      .eq('telegram_id', targetUserId);
+    await bot.sendMessage(chatId, `User ${targetUserId} has been verified.`);
+  } catch (error) {
+    await bot.sendMessage(chatId, 'Error verifying user.');
+  }
+  return;
+}
+
+// Handle other admin callbacks
+if (data.startsWith('admin_') && await AdminHandler.isAdmin(userId)) {
+  await AdminHandler.handleAdminCallback(chatId, userId, data);
+  return;
+}
 
     console.log(`Unhandled callback data: ${data}`);
     await bot.answerCallbackQuery(query.id, { text: 'Feature coming soon!' });
@@ -666,184 +844,7 @@ async function handleSettings(chatId, userId) {
     keyboards.settingsMenu
   );
 }
-// Add these callback handlers to your bot.js file inside the callback_query handler
 
-// Age preference callbacks
-if (data.startsWith('set_age_')) {
-  const ageRange = data.replace('set_age_', '');
-  const [minAge, maxAge] = ageRange.split('_').map(Number);
-  try {
-    await UserService.setAgePreference(userId, minAge, maxAge);
-    await bot.sendMessage(chatId, 
-      `Age preference updated to ${minAge}-${maxAge} years!`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: 'Back to Preferences', callback_data: 'settings_preferences' }]
-          ]
-        }
-      }
-    );
-  } catch (error) {
-    console.error('Error setting age preference:', error);
-    await bot.sendMessage(chatId, 'Error updating preference.');
-  }
-  return;
-}
-
-// Distance preference callbacks
-if (data.startsWith('set_distance_')) {
-  const distance = parseInt(data.replace('set_distance_', ''));
-  try {
-    await UserService.setDistancePreference(userId, distance);
-    await bot.sendMessage(chatId, 
-      `Distance preference updated to ${distance}km!`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: 'Back to Preferences', callback_data: 'settings_preferences' }]
-          ]
-        }
-      }
-    );
-  } catch (error) {
-    console.error('Error setting distance preference:', error);
-    await bot.sendMessage(chatId, 'Error updating preference.');
-  }
-  return;
-}
-
-// Gender preference callbacks
-if (data.startsWith('set_gender_')) {
-  const gender = data.replace('set_gender_', '');
-  const genderMap = {
-    'male': 'male',
-    'female': 'female', 
-    'both': 'both'
-  };
-  
-  try {
-    await UserService.setGenderPreference(userId, genderMap[gender]);
-    await bot.sendMessage(chatId, 
-      `Gender preference updated to ${gender}!`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: 'Back to Preferences', callback_data: 'settings_preferences' }]
-          ]
-        }
-      }
-    );
-  } catch (error) {
-    console.error('Error setting gender preference:', error);
-    await bot.sendMessage(chatId, 'Error updating preference.');
-  }
-  return;
-}
-
-// Privacy visibility callbacks
-if (data.startsWith('set_visibility_')) {
-  const visibility = data.replace('set_visibility_', '');
-  try {
-    await UserService.setProfileVisibility(userId, visibility);
-    await bot.sendMessage(chatId, 
-      `Profile visibility updated to ${visibility}!`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: 'Back to Privacy Settings', callback_data: 'settings_privacy' }]
-          ]
-        }
-      }
-    );
-  } catch (error) {
-    console.error('Error setting visibility:', error);
-    await bot.sendMessage(chatId, 'Error updating setting.');
-  }
-  return;
-}
-
-// Location privacy callbacks
-if (data.startsWith('set_location_')) {
-  const locationPrivacy = data.replace('set_location_', '');
-  try {
-    await UserService.setLocationPrivacy(userId, locationPrivacy);
-    await bot.sendMessage(chatId, 
-      `Location privacy updated to ${locationPrivacy}!`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: 'Back to Privacy Settings', callback_data: 'settings_privacy' }]
-          ]
-        }
-      }
-    );
-  } catch (error) {
-    console.error('Error setting location privacy:', error);
-    await bot.sendMessage(chatId, 'Error updating setting.');
-  }
-  return;
-}
-
-// Message privacy callbacks
-if (data.startsWith('set_messages_')) {
-  const messagePrivacy = data.replace('set_messages_', '');
-  try {
-    await UserService.setMessagePrivacy(userId, messagePrivacy);
-    await bot.sendMessage(chatId, 
-      `Message privacy updated to ${messagePrivacy}!`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: 'Back to Privacy Settings', callback_data: 'settings_privacy' }]
-          ]
-        }
-      }
-    );
-  } catch (error) {
-    console.error('Error setting message privacy:', error);
-    await bot.sendMessage(chatId, 'Error updating setting.');
-  }
-  return;
-}
-
-// Admin callbacks
-if (data.startsWith('admin_ban_')) {
-  const targetUserId = parseInt(data.replace('admin_ban_', ''));
-  await AdminHandler.banUserInternal(targetUserId, 'Banned by admin');
-  await bot.sendMessage(chatId, `User ${targetUserId} has been banned.`);
-  return;
-}
-
-if (data.startsWith('admin_suspend_')) {
-  const targetUserId = parseInt(data.replace('admin_suspend_', ''));
-  await AdminHandler.suspendUserInternal(targetUserId, 7, 'Suspended by admin');
-  await bot.sendMessage(chatId, `User ${targetUserId} has been suspended for 7 days.`);
-  return;
-}
-
-if (data.startsWith('admin_verify_user_')) {
-  const targetUserId = parseInt(data.replace('admin_verify_user_', ''));
-  try {
-    await supabaseAdmin
-      .from('users')
-      .update({
-        is_verified: true,
-        verified_at: new Date().toISOString()
-      })
-      .eq('telegram_id', targetUserId);
-    await bot.sendMessage(chatId, `User ${targetUserId} has been verified.`);
-  } catch (error) {
-    await bot.sendMessage(chatId, 'Error verifying user.');
-  }
-  return;
-}
-
-// Handle other admin callbacks
-if (data.startsWith('admin_') && await AdminHandler.isAdmin(userId)) {
-  await AdminHandler.handleAdminCallback(chatId, userId, data);
-  return;
-}
 
 // Profile editing handlers
 async function handleEditProfileMenu(chatId, userId) {
