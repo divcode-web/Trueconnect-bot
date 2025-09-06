@@ -365,3 +365,286 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 **Built with ❤️ for meaningful connections**
 
 *Last updated: January 2025*
+# Premium Dating Bot for Telegram
+
+A comprehensive Telegram dating bot with advanced matching algorithms, premium subscriptions, payment processing, and admin management features.
+
+## Features
+
+### Core Features
+- 🔐 **User Registration & Profiles** - Complete profile setup with photos, preferences, and verification
+- 💕 **Smart Matching Algorithm** - Location-based matching with compatibility scoring
+- 💬 **In-App Messaging** - Direct messaging between matched users
+- 📸 **Photo Management** - Multiple photo uploads with primary photo selection
+- 🎯 **Advanced Preferences** - Age, distance, education, and lifestyle preferences
+
+### Premium Features
+- 💎 **Multiple Subscription Plans** - Silver, Gold, and Platinum tiers
+- ⭐ **Super Likes** - Stand out with super likes
+- 👀 **See Who Liked You** - View your admirers (premium only)
+- 🚀 **Unlimited Likes** - No daily limits for premium users
+- 🔄 **Rewind Feature** - Undo accidental swipes
+
+### Payment Integration
+- 💳 **Telegram Stars** - Native Telegram payments
+- 🏦 **PayStack Integration** - For Nigerian market
+- ₿ **Crypto Payments** - Bitcoin and other cryptocurrencies via NOWPayments
+
+### Admin Features
+- 🔧 **Admin Dashboard** - Comprehensive management interface
+- 📊 **Analytics & Statistics** - User engagement and platform metrics
+- 🚨 **Report Management** - Handle user reports and moderation
+- ✅ **Verification System** - Manual verification of user profiles
+- 👤 **User Management** - Ban, suspend, and manage users
+
+### Security & Safety
+- 🔒 **Profile Verification** - Photo/video verification system
+- 🚫 **User Reporting** - Report inappropriate behavior
+- 🛡️ **Location Privacy** - Approximate location display
+- 🔐 **Data Protection** - Secure data handling with Supabase
+
+## Tech Stack
+
+- **Backend**: Node.js with Express
+- **Database**: PostgreSQL with Supabase
+- **Bot Framework**: node-telegram-bot-api
+- **Payment Processing**: PayStack, NOWPayments, Telegram Stars
+- **Image Processing**: Sharp
+- **Scheduling**: node-cron
+- **Authentication**: Row Level Security (RLS)
+
+## Installation
+
+### Prerequisites
+- Node.js 18+ and npm
+- Telegram Bot Token (from @BotFather)
+- Supabase account and database
+- PayStack account (optional)
+- NOWPayments account (optional)
+
+### Setup Instructions
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/telegram-dating-bot.git
+   cd telegram-dating-bot
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Set up environment variables**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+4. **Set up Supabase database**
+   - Create a new Supabase project
+   - Run the SQL migrations in order:
+     - `database/migrations/20250905005225_super_coral.sql`
+     - `database/migrations/20250905005305_jolly_prism.sql`  
+     - `database/migrations/20250905141312_blue_grove.sql`
+
+5. **Configure your Telegram Bot**
+   - Create a bot with @BotFather
+   - Set bot commands:
+     ```
+     start - Start the bot
+     profile - View and edit profile
+     browse - Browse potential matches
+     matches - View your matches
+     premium - Upgrade to premium
+     verify - Verify your profile
+     help - Get help
+     ```
+
+6. **Start the application**
+   ```bash
+   # Development mode
+   npm run dev
+   
+   # Production mode
+   npm start
+   ```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Telegram Bot
+BOT_TOKEN=your_bot_token
+WEBHOOK_URL=https://your-domain.com
+ADMIN_USER_ID=your_telegram_id
+
+# Database
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+
+# Payment Gateways (Optional)
+PAYSTACK_PUBLIC_KEY=pk_test_your_key
+PAYSTACK_SECRET_KEY=sk_test_your_key
+NOWPAYMENTS_API_KEY=your_api_key
+NOWPAYMENTS_IPN_SECRET=your_ipn_secret
+
+# Optional Features
+CHANNEL_USERNAME=@your_channel
+VERIFICATION_REQUIRED=false
+ENABLE_ANALYTICS=true
+```
+
+### Subscription Plans Configuration
+
+Edit the plans in `src/services/subscriptionService.js`:
+
+```javascript
+static subscriptionPlans = {
+  silver: {
+    name: 'Silver',
+    price: 19.99,
+    duration: 90, // days
+    features: [...]
+  },
+  // ... other plans
+}
+```
+
+## Database Schema
+
+The bot uses a comprehensive PostgreSQL schema with the following main tables:
+
+- `users` - User profiles and account information
+- `user_photos` - Profile photos
+- `user_preferences` - Matching preferences
+- `user_swipes` - Swipe history (like/pass/super_like)
+- `matches` - Mutual matches
+- `messages` - Chat messages
+- `subscriptions` - Premium subscriptions
+- `payments` - Payment records
+- `verifications` - Identity verification
+- `reports` - User reports
+- `moderation_actions` - Admin actions
+
+## API Endpoints
+
+### Webhooks
+- `POST /webhook/telegram` - Telegram bot webhook
+- `POST /webhook/paystack` - PayStack payment webhook
+- `POST /webhook/nowpayments` - NOWPayments webhook
+
+### Payment Pages
+- `GET /webhook/success` - Payment success page
+- `GET /webhook/cancel` - Payment cancellation page
+
+## Deployment
+
+### Using Railway/Render/Heroku
+
+1. **Set up environment variables** in your deployment platform
+2. **Configure webhook URL** to point to your deployed instance
+3. **Set up database** using Supabase
+4. **Deploy the application**
+
+### Using Docker
+
+```bash
+# Build the image
+docker build -t dating-bot .
+
+# Run the container
+docker run -p 3000:3000 --env-file .env dating-bot
+```
+
+### Using PM2 (Production)
+
+```bash
+# Install PM2
+npm install -g pm2
+
+# Start the application
+pm2 start src/bot.js --name "dating-bot"
+
+# Save PM2 configuration
+pm2 save
+pm2 startup
+```
+
+## Usage
+
+### For Users
+1. Start the bot with `/start`
+2. Complete profile registration
+3. Upload photos and set preferences
+4. Start browsing potential matches
+5. Like/pass on profiles to find matches
+6. Chat with matched users
+
+### For Admins
+1. Set your user ID as `ADMIN_USER_ID` in environment
+2. Use `/admin` to access admin dashboard
+3. Manage reports, verifications, and users
+4. View platform statistics and analytics
+
+## Scheduled Tasks
+
+The bot runs automated tasks:
+- **Daily**: Archive old messages, clean up data
+- **Hourly**: Check expired subscriptions
+- **Daily**: Check suspended users
+
+## Security Features
+
+- Row Level Security (RLS) on all database tables
+- Webhook signature verification
+- Rate limiting on API endpoints
+- Encrypted sensitive data storage
+- Input validation and sanitization
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Support
+
+For support, contact:
+- Telegram: @your_support_username
+- Email: support@yourdomain.com
+- Issues: GitHub Issues page
+
+## Roadmap
+
+- [ ] Video chat integration
+- [ ] AI-powered matching improvements
+- [ ] Social media integration
+- [ ] Advanced analytics dashboard
+- [ ] Multi-language support
+- [ ] Voice messages
+- [ ] Story/status features
+
+## Disclaimer
+
+This bot is designed for educational and legitimate dating purposes. Ensure compliance with:
+- Telegram's Terms of Service
+- Local laws and regulations
+- Data protection regulations (GDPR, etc.)
+- Age verification requirements
+
+## Changelog
+
+### v1.0.0
+- Initial release with core dating features
+- Payment integration
+- Admin management system
+- Comprehensive matching algorithm
