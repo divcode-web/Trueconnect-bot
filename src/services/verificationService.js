@@ -1,10 +1,35 @@
 import { supabaseAdmin } from '../config/database.js';
 import sharp from 'sharp';
-import fetch from 'node-fetch';
 
 export class VerificationService {
   static async startFaceVerification(userId) {
     try {
+      // Check if there's already a pending verification
+      const { data: existingVerification } = await supabaseAdmin
+        .from('verifications')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('verification_type', 'face')
+        .in('status', ['pending', 'submitted'])
+        .single();
+
+      if (existingVerification) {
+        // Update existing verification to pending
+        const { data, error } = await supabaseAdmin
+          .from('verifications')
+          .update({
+            status: 'pending',
+            started_at: new Date().toISOString()
+          })
+          .eq('id', existingVerification.id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        return data;
+      }
+
+      // Create new verification record
       const { data, error } = await supabaseAdmin
         .from('verifications')
         .insert({
@@ -26,40 +51,35 @@ export class VerificationService {
 
   static async submitVerificationPhoto(userId, photoData) {
     try {
-      // Get the file from Telegram
-      const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${photoData.file_path || photoData.file_id}`;
-      
-      let imageBuffer;
-      try {
-        const response = await fetch(fileUrl);
-        imageBuffer = await response.buffer();
-      } catch (fetchError) {
-        console.error('Error fetching photo from Telegram:', fetchError);
-        // Fallback - just use the file_id as reference
-        imageBuffer = null;
+      // Get file from Telegram
+      const fileInfo = await this.getTelegramFile(photoData.file_id);
+      if (!fileInfo) {
+        throw new Error('Could not get file info from Telegram');
       }
 
-      let processedImage = imageBuffer;
-      let fileName = `verification_${userId}_${Date.now()}.jpg`;
+      // Download the file
+      const imageBuffer = await this.downloadTelegramFile(fileInfo.file_path);
       
-      if (imageBuffer) {
-        // Process and optimize the image
-        processedImage = await this.processVerificationImage(imageBuffer);
-        
-        // Upload to Supabase Storage
-        const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
-          .from('verification-photos')
-          .upload(fileName, processedImage, {
-            contentType: 'image/jpeg'
-          });
+      // Process the image
+      const processedImage = await this.processVerificationImage(imageBuffer);
+      
+      // Upload to Supabase Storage
+      const fileName = `verification_${userId}_${Date.now()}.jpg`;
+      const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+        .from('verification-photos')
+        .upload(fileName, processedImage, {
+          contentType: 'image/jpeg'
+        });
 
-        if (uploadError) {
-          console.error('Storage upload error:', uploadError);
-          // Continue without storage upload
-        }
-        
-        fileName = uploadData?.path || fileName;
+      if (uploadError) {
+        console.error('Storage upload error:', uploadError);
+        throw uploadError;
       }
+
+      // Get public URL
+      const { data: publicData } = supabaseAdmin.storage
+        .from('verification-photos')
+        .getPublicUrl(fileName);
 
       // Update or create verification record
       const { data, error } = await supabaseAdmin
@@ -67,8 +87,9 @@ export class VerificationService {
         .upsert({
           user_id: userId,
           verification_type: 'face',
-          photo_url: fileName,
+          photo_url: publicData.publicUrl,
           file_id: photoData.file_id,
+          file_path: fileName,
           status: 'submitted',
           submitted_at: new Date().toISOString()
         })
@@ -83,54 +104,34 @@ export class VerificationService {
     }
   }
 
-  static async processVerificationImage(imageBuffer) {
-    try {
-      return await sharp(imageBuffer)
-        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 85 })
-        .toBuffer();
-    } catch (error) {
-      console.error('Error processing verification image:', error);
-      // Return original buffer if processing fails
-      return imageBuffer;
-    }
-  }
-
   static async submitVerificationVideo(userId, videoData) {
     try {
-      // Process and upload the video
-      const fileName = `verification_video_${userId}_${Date.now()}.mp4`;
-      
-      // Get the file URL from Telegram
-      const fileUrl = videoData.file_path ? 
-        `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${videoData.file_path}` :
-        null;
-
-      let uploadPath = fileName;
-
-      if (fileUrl) {
-        try {
-          const response = await fetch(fileUrl);
-          const videoBuffer = await response.buffer();
-          
-          // Upload to Supabase Storage
-          const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
-            .from('verification-videos')
-            .upload(fileName, videoBuffer, {
-              contentType: 'video/mp4'
-            });
-          
-          if (uploadData?.path) {
-            uploadPath = uploadData.path;
-          }
-          
-          if (uploadError) {
-            console.error('Video upload error:', uploadError);
-          }
-        } catch (fetchError) {
-          console.error('Error fetching video from Telegram:', fetchError);
-        }
+      // Get file from Telegram
+      const fileInfo = await this.getTelegramFile(videoData.file_id);
+      if (!fileInfo) {
+        throw new Error('Could not get file info from Telegram');
       }
+
+      // Download the file
+      const videoBuffer = await this.downloadTelegramFile(fileInfo.file_path);
+      
+      // Upload to Supabase Storage
+      const fileName = `verification_video_${userId}_${Date.now()}.mp4`;
+      const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+        .from('verification-videos')
+        .upload(fileName, videoBuffer, {
+          contentType: 'video/mp4'
+        });
+
+      if (uploadError) {
+        console.error('Video storage upload error:', uploadError);
+        throw uploadError;
+      }
+
+      // Get public URL
+      const { data: publicData } = supabaseAdmin.storage
+        .from('verification-videos')
+        .getPublicUrl(fileName);
 
       // Update or create verification record
       const { data, error } = await supabaseAdmin
@@ -138,8 +139,10 @@ export class VerificationService {
         .upsert({
           user_id: userId,
           verification_type: 'face',
-          photo_url: uploadPath, // Using photo_url field for video path
+          photo_url: publicData.publicUrl, // Using photo_url field for video path
           file_id: videoData.file_id,
+          file_path: fileName,
+          is_video: true,
           status: 'submitted',
           submitted_at: new Date().toISOString()
         })
@@ -151,6 +154,51 @@ export class VerificationService {
     } catch (error) {
       console.error('Error submitting verification video:', error);
       throw error;
+    }
+  }
+
+  static async getTelegramFile(fileId) {
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/getFile?file_id=${fileId}`);
+      const data = await response.json();
+      
+      if (!data.ok) {
+        throw new Error('Failed to get file info from Telegram');
+      }
+      
+      return data.result;
+    } catch (error) {
+      console.error('Error getting Telegram file info:', error);
+      return null;
+    }
+  }
+
+  static async downloadTelegramFile(filePath) {
+    try {
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${filePath}`;
+      const response = await fetch(fileUrl);
+      
+      if (!response.ok) {
+        throw new Error('Failed to download file from Telegram');
+      }
+      
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      console.error('Error downloading file from Telegram:', error);
+      throw error;
+    }
+  }
+
+  static async processVerificationImage(imageBuffer) {
+    try {
+      return await sharp(imageBuffer)
+        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+    } catch (error) {
+      console.error('Error processing verification image:', error);
+      // Return original buffer if processing fails
+      return imageBuffer;
     }
   }
 
@@ -327,13 +375,6 @@ export class VerificationService {
     return degrees * (Math.PI / 180);
   }
 
-  static async saveVideoToStorage(telegram_id, fileId) {
-    // Download video from Telegram and upload to Supabase Storage
-    // Return public URL
-    // This is a placeholder - implement actual video storage logic
-    return `https://your-supabase-url/storage/v1/object/public/verification-videos/${telegram_id}_${fileId}.mp4`;
-  }
-
   static async getUserVerificationStatus(userId) {
     try {
       const { data, error } = await supabaseAdmin
@@ -348,6 +389,34 @@ export class VerificationService {
       return data;
     } catch (error) {
       console.error('Error fetching verification status:', error);
+      return null;
+    }
+  }
+
+  // Legacy method for compatibility
+  static async saveVideoToStorage(telegram_id, fileId) {
+    try {
+      const fileInfo = await this.getTelegramFile(fileId);
+      if (!fileInfo) return null;
+
+      const videoBuffer = await this.downloadTelegramFile(fileInfo.file_path);
+      const fileName = `verification_video_${telegram_id}_${Date.now()}.mp4`;
+      
+      const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+        .from('verification-videos')
+        .upload(fileName, videoBuffer, {
+          contentType: 'video/mp4'
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicData } = supabaseAdmin.storage
+        .from('verification-videos')
+        .getPublicUrl(fileName);
+
+      return publicData.publicUrl;
+    } catch (error) {
+      console.error('Error saving video to storage:', error);
       return null;
     }
   }

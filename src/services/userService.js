@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../config/database.js';
+import sharp from 'sharp';
 
 export class UserService {
   static async createUser(telegramData) {
@@ -63,7 +64,10 @@ export class UserService {
     try {
       const { data, error } = await supabaseAdmin
         .from('users')
-        .update(fields)
+        .update({
+          ...fields,
+          updated_at: new Date().toISOString()
+        })
         .eq('telegram_id', telegram_id)
         .select()
         .single();
@@ -88,16 +92,50 @@ export class UserService {
     });
   }
 
+  // IMPROVED PHOTO HANDLING WITH STORAGE
   static async addUserPhoto(telegramId, photoData) {
     try {
+      // Get file info from Telegram
+      const fileInfo = await this.getTelegramFile(photoData.file_id);
+      if (!fileInfo) {
+        throw new Error('Could not get file info from Telegram');
+      }
+
+      // Download the photo
+      const imageBuffer = await this.downloadTelegramFile(fileInfo.file_path);
+      
+      // Process the image
+      const processedImage = await this.processProfileImage(imageBuffer);
+      
+      // Upload to Supabase Storage
+      const fileName = `profile_${telegramId}_${Date.now()}.jpg`;
+      const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+        .from('profile-photos')
+        .upload(fileName, processedImage, {
+          contentType: 'image/jpeg'
+        });
+
+      if (uploadError) {
+        console.error('Photo storage upload error:', uploadError);
+        // Continue without throwing error - save reference anyway
+      }
+
+      // Get public URL
+      const { data: publicData } = supabaseAdmin.storage
+        .from('profile-photos')
+        .getPublicUrl(fileName);
+
+      // Save photo record to database
       const { data, error } = await supabaseAdmin
         .from('user_photos')
         .insert({
           user_id: telegramId,
-          photo_url: photoData.url,
+          photo_url: publicData.publicUrl,
           file_id: photoData.file_id,
+          file_path: fileName,
           is_primary: photoData.is_primary || false,
-          order_index: photoData.order_index || 0
+          order_index: photoData.order_index || 0,
+          created_at: new Date().toISOString()
         })
         .select()
         .single();
@@ -106,10 +144,77 @@ export class UserService {
       return data;
     } catch (error) {
       console.error('Error adding user photo:', error);
+      
+      // Fallback - save just the file_id without storage
+      try {
+        const { data, error: fallbackError } = await supabaseAdmin
+          .from('user_photos')
+          .insert({
+            user_id: telegramId,
+            photo_url: `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${photoData.file_id}`,
+            file_id: photoData.file_id,
+            is_primary: photoData.is_primary || false,
+            order_index: photoData.order_index || 0,
+            created_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+        
+        if (fallbackError) throw fallbackError;
+        return data;
+      } catch (fallbackError) {
+        console.error('Fallback photo save also failed:', fallbackError);
+        throw error;
+      }
+    }
+  }
+
+  static async getTelegramFile(fileId) {
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/getFile?file_id=${fileId}`);
+      const data = await response.json();
+      
+      if (!data.ok) {
+        throw new Error('Failed to get file info from Telegram');
+      }
+      
+      return data.result;
+    } catch (error) {
+      console.error('Error getting Telegram file info:', error);
+      return null;
+    }
+  }
+
+  static async downloadTelegramFile(filePath) {
+    try {
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${filePath}`;
+      const response = await fetch(fileUrl);
+      
+      if (!response.ok) {
+        throw new Error('Failed to download file from Telegram');
+      }
+      
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      console.error('Error downloading file from Telegram:', error);
       throw error;
     }
   }
 
+  static async processProfileImage(imageBuffer) {
+    try {
+      return await sharp(imageBuffer)
+        .resize(1080, 1080, { fit: 'cover', withoutEnlargement: false })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+    } catch (error) {
+      console.error('Error processing profile image:', error);
+      // Return original buffer if processing fails
+      return imageBuffer;
+    }
+  }
+
+  // Legacy method for backward compatibility
   static async addPhoto(telegram_id, photoUrl) {
     try {
       const { data, error } = await supabaseAdmin
@@ -119,7 +224,8 @@ export class UserService {
           photo_url: photoUrl,
           file_id: null,
           is_primary: false,
-          order_index: 0
+          order_index: 0,
+          created_at: new Date().toISOString()
         })
         .select()
         .single();
@@ -132,11 +238,33 @@ export class UserService {
     }
   }
 
+  // Legacy method for backward compatibility
   static async savePhotoToStorage(telegram_id, fileId) {
-    // Download photo from Telegram and upload to Supabase Storage
-    // Return public URL
-    // This is a placeholder - implement actual photo storage logic
-    return `https://your-supabase-url/storage/v1/object/public/profile-photos/${telegram_id}_${fileId}.jpg`;
+    try {
+      const fileInfo = await this.getTelegramFile(fileId);
+      if (!fileInfo) return null;
+
+      const imageBuffer = await this.downloadTelegramFile(fileInfo.file_path);
+      const processedImage = await this.processProfileImage(imageBuffer);
+      const fileName = `profile_${telegram_id}_${Date.now()}.jpg`;
+      
+      const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+        .from('profile-photos')
+        .upload(fileName, processedImage, {
+          contentType: 'image/jpeg'
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicData } = supabaseAdmin.storage
+        .from('profile-photos')
+        .getPublicUrl(fileName);
+
+      return publicData.publicUrl;
+    } catch (error) {
+      console.error('Error saving photo to storage:', error);
+      return `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${fileId}`;
+    }
   }
 
   static async getUserLikes(telegram_id) {
@@ -315,6 +443,20 @@ export class UserService {
 
   static async deleteUserAccount(telegramId) {
     try {
+      // Delete user photos from storage first
+      const photos = await this.getUserPhotos(telegramId);
+      for (const photo of photos) {
+        if (photo.file_path) {
+          try {
+            await supabaseAdmin.storage
+              .from('profile-photos')
+              .remove([photo.file_path]);
+          } catch (storageError) {
+            console.error('Error deleting photo from storage:', storageError);
+          }
+        }
+      }
+
       // This will cascade delete all related data due to foreign key constraints
       const { error } = await supabaseAdmin
         .from('users')
@@ -350,6 +492,7 @@ export class UserService {
     }
   }
 
+  // PREFERENCES METHODS
   static async updateUserPreferences(telegramId, preferences) {
     try {
       const { data, error } = await supabaseAdmin
@@ -376,7 +519,15 @@ export class UserService {
         .select('*')
         .eq('user_id', telegramId)
         .single();
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error && error.code !== 'PGRST116') {
+        // If record doesn't exist, return default settings
+        return {
+          new_matches: true,
+          new_messages: true,
+          profile_views: true,
+          super_likes: true
+        };
+      }
       return data || {
         new_matches: true,
         new_messages: true,
@@ -420,7 +571,14 @@ export class UserService {
         .select('*')
         .eq('user_id', telegramId)
         .single();
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error && error.code !== 'PGRST116') {
+        // If record doesn't exist, return default settings
+        return {
+          profile_visibility: 'public',
+          location_privacy: 'approximate',
+          message_privacy: 'matches_only'
+        };
+      }
       return data || {
         profile_visibility: 'public',
         location_privacy: 'approximate',
@@ -455,8 +613,31 @@ export class UserService {
     }
   }
 
+  // PHOTO MANAGEMENT METHODS
   static async deleteUserPhoto(telegramId, photoId) {
     try {
+      // Get photo info first
+      const { data: photo, error: getError } = await supabaseAdmin
+        .from('user_photos')
+        .select('*')
+        .eq('user_id', telegramId)
+        .eq('id', photoId)
+        .single();
+
+      if (getError) throw getError;
+
+      // Delete from storage if exists
+      if (photo.file_path) {
+        try {
+          await supabaseAdmin.storage
+            .from('profile-photos')
+            .remove([photo.file_path]);
+        } catch (storageError) {
+          console.error('Error deleting photo from storage:', storageError);
+        }
+      }
+
+      // Delete from database
       const { error } = await supabaseAdmin
         .from('user_photos')
         .delete()
@@ -492,124 +673,28 @@ export class UserService {
     }
   }
 
-  // Missing methods that were being called
-  static async getLikesForUser(telegramId) {
-    return this.getUserLikes(telegramId);
-  }
-
-  static async getUserSubscription(telegramId) {
-    try {
-      const { data, error } = await supabaseAdmin
-        .from('subscriptions')
-        .select('*')
-        .eq('user_id', telegramId)
-        .eq('status', 'active')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (error && error.code !== 'PGRST116') throw error;
-      return data;
-    } catch (error) {
-      console.error('Error fetching user subscription:', error);
-      return null;
-    }
-  }
-
-  // Method to set age range preferences
+  // HELPER METHODS FOR PREFERENCES
   static async setAgePreference(telegramId, minAge, maxAge) {
-    try {
-      const { data, error } = await supabaseAdmin
-        .from('user_preferences')
-        .upsert({
-          user_id: telegramId,
-          min_age: minAge,
-          max_age: maxAge,
-          updated_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error setting age preference:', error);
-      throw error;
-    }
+    return this.updateUserPreferences(telegramId, { min_age: minAge, max_age: maxAge });
   }
 
-  // Method to set distance preference
-  static async setDistancePreference(telegramId, maxDistance) {
-    try {
-      const { data, error } = await supabaseAdmin
-        .from('user_preferences')
-        .upsert({
-          user_id: telegramId,
-          max_distance: maxDistance,
-          updated_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error setting distance preference:', error);
-      throw error;
-    }
+  static async setDistancePreference(telegramId, distance) {
+    return this.updateUserPreferences(telegramId, { max_distance: distance });
   }
 
-  // Method to set gender preference
-  static async setGenderPreference(telegramId, preferredGender) {
-    try {
-      const { data, error } = await supabaseAdmin
-        .from('user_preferences')
-        .upsert({
-          user_id: telegramId,
-          preferred_gender: preferredGender,
-          updated_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error setting gender preference:', error);
-      throw error;
-    }
+  static async setGenderPreference(telegramId, gender) {
+    return this.updateUserPreferences(telegramId, { preferred_gender: gender });
   }
 
-  // Method to update profile visibility
   static async setProfileVisibility(telegramId, visibility) {
-    try {
-      const settings = await this.getUserPrivacySettings(telegramId);
-      settings.profile_visibility = visibility;
-      return await this.updatePrivacySettings(telegramId, settings);
-    } catch (error) {
-      console.error('Error setting profile visibility:', error);
-      throw error;
-    }
+    return this.updatePrivacySettings(telegramId, { profile_visibility: visibility });
   }
 
-  // Method to update location privacy
   static async setLocationPrivacy(telegramId, privacy) {
-    try {
-      const settings = await this.getUserPrivacySettings(telegramId);
-      settings.location_privacy = privacy;
-      return await this.updatePrivacySettings(telegramId, settings);
-    } catch (error) {
-      console.error('Error setting location privacy:', error);
-      throw error;
-    }
+    return this.updatePrivacySettings(telegramId, { location_privacy: privacy });
   }
 
-  // Method to update message privacy
   static async setMessagePrivacy(telegramId, privacy) {
-    try {
-      const settings = await this.getUserPrivacySettings(telegramId);
-      settings.message_privacy = privacy;
-      return await this.updatePrivacySettings(telegramId, settings);
-    } catch (error) {
-      console.error('Error setting message privacy:', error);
-      throw error;
-    }
+    return this.updatePrivacySettings(telegramId, { message_privacy: privacy });
   }
 }
